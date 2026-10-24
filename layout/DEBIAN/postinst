@@ -1,23 +1,17 @@
 #!/bin/sh
-# Only this package's own domain is touched.
+# Standard behaviour: do not reload SpringBoard here. Sileo/apt shows its own
+# "Respring" prompt after the install and the user triggers it manually.
 DOMAIN=com.minis.powercuff-baldaran-trusted
 if command -v defaults >/dev/null 2>&1; then
     defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
     defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
 fi
 
-# The library is only loaded into processes started after installation.
-# Restart the thermal daemon and reload SpringBoard so the tweak is active.
+# thermalmonitord is NOT restarted by a respring, so it must be reloaded here or
+# the thermal side would keep running the old image. This is headless and causes
+# no visible interruption.
 if command -v launchctl >/dev/null 2>&1; then
     launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1 || true
 fi
 command -v killall >/dev/null 2>&1 && killall -9 thermalmonitord >/dev/null 2>&1 || true
-
-if command -v sbreload >/dev/null 2>&1; then
-    sbreload >/dev/null 2>&1 || true
-elif command -v launchctl >/dev/null 2>&1 && launchctl kickstart -k system/com.apple.SpringBoard >/dev/null 2>&1; then
-    :
-else
-    command -v killall >/dev/null 2>&1 && killall -9 SpringBoard >/dev/null 2>&1 || true
-fi
 exit 0

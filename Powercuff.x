@@ -51,6 +51,16 @@ static void LoadSettings(void) {
     notify_post(PCR_THERMALS_CHANGED);
 }
 
+@interface CommonProduct : NSObject
+- (id)initProduct:(id)arg1;
+- (void)putDeviceInThermalSimulationMode:(NSString *)mode;
+@end
+
+@interface GPProduct : NSObject
+- (id)initProduct:(id)arg1;
+- (void)putDeviceInThermalSimulationMode:(NSString *)mode;
+@end
+
 %group thermalmonitord
 %hook CommonProduct
 - (id)initProduct:(id)arg1 {

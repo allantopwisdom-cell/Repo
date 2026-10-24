@@ -31,3 +31,16 @@ iPhone 14 Pro Max / iOS 16.5 / RootHide Dopamine 适配。
 - Moderate / LowPowerMode 档位的实际热节流效果
 - 与其它热控类插件共存的表现（已用 Conflicts 规避）
 - 卸载后 thermalmonitord 状态是否完全恢复
+
+## 下载
+
+https://github.com/allantopwisdom-cell/Repo/releases/download/v1.1.0/com.minis.powercuff-baldaran-trusted_1.1.0_iphoneos-arm64e.deb
+
+已匿名下载校验：HTTP 200、13686 字节、SHA-256 与本地构建一致。
+
+## 设备端自检
+
+`verify-on-device.sh` 为只读脚本，不修改任何设置：
+安装后运行确认三个文件存在、偏好域可读、`notifyutil -g ...thermals` 为 0；
+切到 Moderate 后再跑应为 3；切回 Off 应回到 0。
+若状态不变，说明 tweak 未注入 SpringBoard，respring 一次再验。

@@ -4,55 +4,83 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
-    inputs:
-      log_level:
-        description: 'Log level'
-        required: false
-        default: 'info'
+
+permissions:
+  contents: write
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+  THEOS: ${{ github.workspace }}/theos-roothide
 
 jobs:
   build:
+    name: Build (roothide)
     runs-on: macos-14
-    timeout-minutes: 20
-    env:
-      THEOS: ${{ github.workspace }}/../theos
+    timeout-minutes: 25
     steps:
-    - uses: actions/checkout@v4
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
 
-    - name: Install roothide/theos
-      run: |
-        rm -rf $HOME/theos
-        git clone --depth 1 https://github.com/roothide/theos.git $HOME/theos
-        echo "$HOME/theos/bin" >> $GITHUB_PATH
-        export THEOS=$HOME/theos
-        echo "THEOS=$THEOS" >> $GITHUB_ENV
-        echo "THEOS_PACKAGE_SCHEME=roothide" >> $GITHUB_ENV
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Build package
-      run: |
-        echo "=== Environment ==="
-        env | grep -E '(THEOS|ARCHS|THEOS_PACKAGE_SCHEME)' || true
-        echo "=== Makefile ==="
-        cat Makefile
-        echo "=== Building ==="
-        make clean 2>/dev/null || true
-        make package messages=yes || { echo "=== BUILD FAILED ==="; exit 1; }
-        echo "=== Package location ==="
-        ls -la packages/
+      - name: Setup Theos path
+        run: |
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "THEOS_IGNORE_PARALLEL_BUILDING_NOTICE=yes" >> "$HOME/.theosrc"
 
-    - name: Upload deb artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: PowerCuff-Baldaran-Trusted-arm64e
-        path: packages/*.deb
+      - name: Checkout Theos (RootHide)
+        uses: actions/checkout@v4
+        with:
+          repository: roothide/theos
+          path: theos-roothide
+          submodules: recursive
 
-    - name: Create Release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        DEB=$(ls packages/*.deb | head -1)
-        gh release create "v$(date +%Y%m%d)-${{ github.sha }}" \
-          --title "RootHide arm64e build $(date +%Y%m%d)" \
-          --generate-notes \
-          "$DEB"
+      - name: Install iOS SDK (iPhoneOS16.5)
+        run: |
+          set -euo pipefail
+          mkdir -p "$THEOS/sdks"
+          if [ -d "$THEOS/sdks/iPhoneOS16.5.sdk" ]; then
+            echo "iPhoneOS16.5.sdk already present"
+            exit 0
+          fi
+          SDK_STAGE="$(mktemp -d)"
+          trap 'rm -rf "$SDK_STAGE"' EXIT
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$SDK_STAGE/sdks"
+          git -C "$SDK_STAGE/sdks" sparse-checkout set iPhoneOS16.5.sdk
+          cp -R "$SDK_STAGE/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
+          ls -1 "$THEOS/sdks"
+
+      - name: Install Theos dependencies
+        run: |
+          brew install ldid dpkg xz
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+
+      - name: Build Package
+        run: |
+          chmod +x build.sh
+          sh build.sh roothide
+          echo "=== .deb files ==="
+          find ./packages -name "*.deb" -type f
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PowerCuff-Baldaran-Trusted-arm64e
+          path: ./packages/*.deb
+          if-no-files-found: error
+
+      - name: Create Release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ github.token }}
+          tag_name: v1.0.0-1
+          name: PowerCuff Baldaran Trusted RootHide v1.0.0-1
+          files: ./packages/*.deb

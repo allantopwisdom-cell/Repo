@@ -1,9 +1,10 @@
 Package: com.minis.powercuff-baldaran-trusted
 Name: PowerCuff Baldaran Trusted RootHide
-Depends: mobilesubstrate (>= 0.9.9000) | roothide-bootstrap, preferenceloader, firmware (>= 16.0)
-Version: 1.0.0-1
+Version: 1.1.0
 Architecture: iphoneos-arm64e
 Maintainer: Minis
 Author: rpetrich, dlevi309, Baldaran, Minis
 Section: Tweaks
-Description: PowerCuff thermal simulation profiles for RootHide. Uses only CommonProduct/GPProduct via the original Baldaran logic. Defaults to off. Does not freeze background processes or enforce frame rate caps.
+Depends: mobilesubstrate (>= 0.9.9000) | roothide-bootstrap, preferenceloader, firmware (>= 16.0)
+Conflicts: com.rpetrich.powercuff, com.baldaran.powercuff-r3vamp, com.minis.powercuff-r3vamp-roothide, com.minis.powercuff-r3vamp-trusted
+Description: Thermal simulation profiles for iOS, rebuilt for RootHide. Reads settings through cfprefsd, caches the thermal product weakly, and applies a single profile per change. Defaults to off. Does not freeze background apps or cap frame rate.

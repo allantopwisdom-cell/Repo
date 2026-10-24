@@ -1,6 +1,15 @@
 #!/bin/sh
-# Write defaults for the trusted domain so the tweak has valid state even if
-# no one opens Settings first. This does NOT touch any other package's keys.
-defaults write com.minis.powercuff-baldaran-trusted PowerMode -int 0
-defaults write com.minis.powercuff-baldaran-trusted RequireLowPowerMode -bool NO
+# Initialise this package's own domain only; never touch other PowerCuff keys.
+DOMAIN=com.minis.powercuff-baldaran-trusted
+if command -v defaults >/dev/null 2>&1; then
+    defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
+    defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
+fi
+
+# Reload the injected processes so the tweak is actually active after install.
+if command -v launchctl >/dev/null 2>&1; then
+    launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1 || true
+fi
+killall -9 thermalmonitord >/dev/null 2>&1 || true
+killall -9 SpringBoard >/dev/null 2>&1 || true
 exit 0

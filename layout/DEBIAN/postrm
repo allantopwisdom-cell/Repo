@@ -1,2 +1,8 @@
 #!/bin/sh
+# On real removal, reload the daemon so the remaining process drops the hook.
+case "$1" in
+    remove|purge)
+        killall -9 thermalmonitord >/dev/null 2>&1 || true
+        ;;
+esac
 exit 0

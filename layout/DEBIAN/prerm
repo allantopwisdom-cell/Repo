@@ -1,7 +1,10 @@
 #!/bin/sh
-# On removal write off to this package's own domain and notify the daemon to
-# clear its cached state. We do not modify the old com.rpetrich domain.
-defaults write com.minis.powercuff-baldaran-trusted PowerMode -int 0 2>/dev/null || true
-notify_post com.minis.powercuff-baldaran-trusted.thermals 2>/dev/null || true
+# Force the profile back to off before the library disappears, then notify.
+DOMAIN=com.minis.powercuff-baldaran-trusted
+if command -v defaults >/dev/null 2>&1; then
+    defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
+    defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
+fi
 notify_post com.minis.powercuff-baldaran-trusted.settingschanged 2>/dev/null || true
+notify_post com.minis.powercuff-baldaran-trusted.thermals 2>/dev/null || true
 exit 0

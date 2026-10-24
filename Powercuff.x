@@ -51,21 +51,11 @@ static void LoadSettings(void) {
     notify_post(PCR_THERMALS_CHANGED);
 }
 
-@interface CommonProduct : NSObject
-- (id)initProduct:(id)arg1;
-- (void)putDeviceInThermalSimulationMode:(NSString *)mode;
-@end
-
-@interface GPProduct : NSObject
-- (id)initProduct:(id)arg1;
-- (void)putDeviceInThermalSimulationMode:(NSString *)mode;
-@end
-
 %group thermalmonitord
 %hook CommonProduct
 - (id)initProduct:(id)arg1 {
     id obj = %orig(arg1);
-    if (!gProductClass) gProductClass = [CommonProduct class];
+    if (!gProductClass) gProductClass = objc_getClass("CommonProduct");
     if (gProductClass && obj && [obj isKindOfClass:gProductClass]) {
         currentTarget = obj;
         ApplyThermals();
@@ -77,7 +67,7 @@ static void LoadSettings(void) {
 %hook GPProduct
 - (id)initProduct:(id)arg1 {
     id obj = %orig(arg1);
-    if (!gProductClass) gProductClass = [GPProduct class];
+    if (!gProductClass) gProductClass = objc_getClass("GPProduct");
     if (gProductClass && obj && [obj isKindOfClass:gProductClass]) {
         currentTarget = obj;
         ApplyThermals();

@@ -51,3 +51,32 @@ control 里 `Version: 1.0.0-1` 又被 theos 追加 `-1`，版本号出现两段 
 - L3 卸载后 thermalmonitord 仍带 hook → postrm 在 remove/purge 时重启它。
 - L4 Off 时原实现先传 nil 再传 "off"，传 nil 给系统方法有崩溃风险；
   上游与已发布二进制都只传 "off"。→ 只传 "off"。
+
+# v1.1.0 复审 → v1.1.1
+
+## 已确认仍然存在的真实问题（v1.1.1 已修）
+
+### H5 与其它 PowerCuff 共享 dylib 文件名
+`Powercuff.dylib` / `Powercuff.plist` 与 rpetrich 原版、r3vamp 完全相同路径。
+Conflicts 只能防止"通过 dpkg 同时安装"；若旧包是手工拷贝或残留文件，
+新包会覆盖同一路径，反之亦然，导致加载到错误的实现。
+→ tweak 名改为 `PowercuffBaldaranTrusted`，dylib/filter 随之唯一。
+
+### H6 与其它 PowerCuff 共享偏好面板目录
+面板放在 `Preferences/Powercuff/`，与其它 PowerCuff 打包位置重叠，
+会互相覆盖面板 plist。
+→ 独立目录 `Preferences/PowercuffBaldaranTrusted/`。
+
+### M5 重复触发私有热控 API
+每次设置变更都会重新下发相同档位，向系统私有方法重复调用。
+→ daemon 侧记录已下发档位，相同则跳过；product 重建时强制重发。
+
+### M6 重复广播
+SpringBoard 每次收到通知都 `notify_post`，即使档位未变。
+→ 记录上次广播值，未变则不广播；启动时强制广播一次。
+
+## 仍无法在本机消除的风险
+1. `putDeviceInThermalSimulationMode:` 若在 iOS 16.5 上不属于
+   CommonProduct/GPProduct，插件将静默无效——只有真机能证实。
+2. 各档位实际节流幅度依赖系统实现，静态分析无法给出数值。
+3. 卸载后 thermalmonitord 复位依赖进程重启（已做 best effort），需实测。

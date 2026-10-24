@@ -2,19 +2,12 @@
 #import <Foundation/Foundation.h>
 #import <roothide.h>
 
-@interface CommonProduct : NSObject
-- (void)putDeviceInThermalSimulationMode:(NSString *)mode;
-@end
-
-@interface GPProduct : NSObject
-- (void)putDeviceInThermalSimulationMode:(NSString *)mode;
-@end
-
 static const char *const PCR_SETTINGS_CHANGED =
     "com.minis.powercuff-baldaran-trusted.settingschanged";
 static const char *const PCR_THERMALS_CHANGED =
     "com.minis.powercuff-baldaran-trusted.thermals";
 
+static Class gProductClass;
 static id currentTarget;
 static int token;
 
@@ -26,16 +19,20 @@ static NSString *PCPreferencesPath(void) {
     return jbroot(raw);
 }
 
+static BOOL IsValidProduct(id obj) {
+    return gProductClass && obj && [obj isKindOfClass:gProductClass];
+}
+
 static void ApplyThermals(void) {
     uint64_t mode = 0;
     notify_get_state(token, &mode);
     NSArray *modes = @[@"off", @"nominal", @"light", @"moderate", @"heavy"];
-    if (currentTarget) {
+    if (IsValidProduct(currentTarget)) {
         if ([currentTarget respondsToSelector:@selector(putDeviceInThermalSimulationMode:)]) {
             if (mode == 0) {
                 [currentTarget putDeviceInThermalSimulationMode:nil];
                 [currentTarget putDeviceInThermalSimulationMode:@"off"];
-            } else if (mode < modes.count) {
+            } else if (mode < (uint64_t)modes.count) {
                 [currentTarget putDeviceInThermalSimulationMode:modes[mode]];
             }
         }
@@ -59,7 +56,8 @@ static void LoadSettings(void) {
 %hook CommonProduct
 - (id)initProduct:(id)arg1 {
     id obj = %orig(arg1);
-    if (obj && [obj isKindOfClass:[CommonProduct class]]) {
+    gProductClass = [CommonProduct class];
+    if (IsValidProduct(obj)) {
         currentTarget = obj;
         ApplyThermals();
     }
@@ -70,7 +68,10 @@ static void LoadSettings(void) {
 %hook GPProduct
 - (id)initProduct:(id)arg1 {
     id obj = %orig(arg1);
-    if (obj && [obj isKindOfClass:[GPProduct class]]) {
+    if (!gProductClass) {
+        gProductClass = [GPProduct class];
+    }
+    if (IsValidProduct(obj)) {
         currentTarget = obj;
         ApplyThermals();
     }

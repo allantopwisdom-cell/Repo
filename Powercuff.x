@@ -12,17 +12,14 @@
 - (void)putDeviceInThermalSimulationMode:(NSString *)mode;
 @end
 
-static const NSString *const PCRSettingsChanged =
-    @"com.minis.powercuff-baldaran-trusted.settingschanged";
-static const NSString *const PCRThermalsChanged   =
-    @"com.minis.powercuff-baldaran-trusted.thermals";
+static const char *const PCR_SETTINGS_CHANGED =
+    "com.minis.powercuff-baldaran-trusted.settingschanged";
+static const char *const PCR_THERMALS_CHANGED =
+    "com.minis.powercuff-baldaran-trusted.thermals";
 
 static id currentTarget;
 static int token;
 
-/* Read the user's preference key from the trusted domain. The path is only
-   consulted at runtime, so on a RootHide device we must prefix it with the
-   actual jailbreak root returned by the Roohide jbroot() API. */
 static NSString *PCPreferencesPath(void) {
     NSString *raw = @"/var/mobile/Library/Preferences/"
                     @"com.minis.powercuff-baldaran-trusted.plist";
@@ -36,23 +33,19 @@ static void ApplyThermals(void) {
     uint64_t mode = 0;
     notify_get_state(token, &mode);
 
-    NSArray<NSString *> *modes =
-        @[@"off", @"nominal", @"light", @"moderate", @"heavy"];
+    NSArray *modes = @[@"off", @"nominal", @"light", @"moderate", @"heavy"];
 
     if (currentTarget) {
         if (mode == 0) {
-            /* Explicit OFF: clear any prior simulation state before forcing
-               the canonical off string so the system fully resets. */
             if ([currentTarget respondsToSelector:@selector(
                     putDeviceInThermalSimulationMode:)]) {
                 [currentTarget putDeviceInThermalSimulationMode:nil];
                 [currentTarget putDeviceInThermalSimulationMode:@"off"];
             }
         } else if (mode < modes.count) {
-            NSString *modeStr = modes[mode];
             if ([currentTarget respondsToSelector:@selector(
                     putDeviceInThermalSimulationMode:)]) {
-                [currentTarget putDeviceInThermalSimulationMode:modeStr];
+                [currentTarget putDeviceInThermalSimulationMode:modes[mode]];
             }
         }
     }
@@ -60,11 +53,10 @@ static void ApplyThermals(void) {
 
 static void LoadSettings(void) {
     NSString *path = PCPreferencesPath();
-    NSDictionary *prefs =
-        [NSDictionary dictionaryWithContentsOfFile:path];
+    NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:path];
 
-    uint64_t mode = [[prefs objectForKey:@"PowerMode"]
-                         ?: @0 unsignedLongLongValue];
+    uint64_t mode = [[prefs objectForKey:@"PowerMode"] ?: @0
+                         unsignedLongLongValue];
 
     if ([[prefs objectForKey:@"RequireLowPowerMode"] boolValue]) {
         if (![[NSProcessInfo processInfo] isLowPowerModeEnabled]) {
@@ -73,7 +65,7 @@ static void LoadSettings(void) {
     }
 
     notify_set_state(token, mode);
-    notify_post(PCRThermalsChanged);
+    notify_post(PCR_THERMALS_CHANGED);
 }
 
 %group thermalmonitord
@@ -101,7 +93,7 @@ static void LoadSettings(void) {
 %end
 
 %ctor {
-    notify_register_check([PCRThermalsChanged UTF8String], &token);
+    notify_register_check(PCR_THERMALS_CHANGED, &token);
 
     NSString *procName = [[NSProcessInfo processInfo] processName];
 
@@ -109,22 +101,18 @@ static void LoadSettings(void) {
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             NULL, (CFNotificationCallback)ApplyThermals,
-            (__bridge CFStringRef)PCRThermalsChanged, NULL,
+            CFSTR(PCR_THERMALS_CHANGED), NULL,
             CFNotificationSuspensionBehaviorCoalesce);
         %init(thermalmonitord);
     } else {
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             NULL, (CFNotificationCallback)LoadSettings,
-            (__bridge CFStringRef)PCRSettingsChanged, NULL,
+            CFSTR(PCR_SETTINGS_CHANGED), NULL,
             CFNotificationSuspensionBehaviorCoalesce);
 
         if ([procName isEqualToString:@"SpringBoard"]) {
             LoadSettings();
-        }
-    }
-}
-s();
         }
     }
 }

@@ -6,10 +6,10 @@ THEOS_PACKAGE_SCHEME = roothide
 DEBUG = 0
 FINALPACKAGE = 1
 
-TWEAK_NAME = Powercuff
-Powercuff_FILES = Powercuff.x
-Powercuff_FRAMEWORKS = Foundation
-Powercuff_CFLAGS = -fobjc-arc -Wall
+TWEAK_NAME = PowercuffBaldaranTrusted
+PowercuffBaldaranTrusted_FILES = Powercuff.x
+PowercuffBaldaranTrusted_FRAMEWORKS = Foundation
+PowercuffBaldaranTrusted_CFLAGS = -fobjc-arc -Wall
 
 include $(THEOS)/makefiles/common.mk
 include $(THEOS_MAKE_PATH)/tweak.mk

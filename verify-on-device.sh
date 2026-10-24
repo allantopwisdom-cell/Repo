@@ -14,9 +14,9 @@ jb() {
 }
 
 echo "== 1. installed files =="
-for f in /Library/MobileSubstrate/DynamicLibraries/Powercuff.dylib \
-         /Library/MobileSubstrate/DynamicLibraries/Powercuff.plist \
-         /Library/PreferenceLoader/Preferences/Powercuff/Powercuff.plist; do
+for f in /Library/MobileSubstrate/DynamicLibraries/PowercuffBaldaranTrusted.dylib \
+         /Library/MobileSubstrate/DynamicLibraries/PowercuffBaldaranTrusted.plist \
+         /Library/PreferenceLoader/Preferences/PowercuffBaldaranTrusted/Powercuff.plist; do
     p=$(jb "$f")
     if [ -f "$p" ]; then echo "  OK   $f"; else echo "  MISS $f"; fi
 done

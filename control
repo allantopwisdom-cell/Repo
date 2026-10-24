@@ -1,6 +1,6 @@
 Package: com.minis.powercuff-baldaran-trusted
 Name: PowerCuff Baldaran Trusted RootHide
-Version: 1.1.0
+Version: 1.1.1
 Architecture: iphoneos-arm64e
 Maintainer: Minis
 Author: rpetrich, dlevi309, Baldaran, Minis

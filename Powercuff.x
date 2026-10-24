@@ -7,17 +7,16 @@
 /*
  * PowerCuff Baldaran Trusted — thermal simulation profiles for RootHide.
  *
- * Design notes:
- *  - Preferences are read through NSUserDefaults (cfprefsd), never by reading
- *    the plist file directly. PreferenceLoader writes through cfprefsd, which
- *    does not guarantee an immediate flush, so a raw file read can be stale.
- *    Going through cfprefsd also avoids hardcoding a jailbreak-dependent path.
- *  - The cached product is held weakly; a strong static reference would retain
- *    a system object and keep a stale instance alive across rebuilds.
- *  - All work runs on one serial queue: notify callbacks, LPM changes and hook
- *    entry points can otherwise race on the same state.
- *  - Only "off" is sent for mode 0. Passing nil to the private selector has no
- *    documented behavior and is avoided.
+ *  - Settings are read through NSUserDefaults (cfprefsd). PreferenceLoader
+ *    writes through cfprefsd too, and cfprefsd does not flush immediately, so
+ *    reading the plist file directly can return stale values.
+ *  - The cached product is weak; a strong static would retain a system object
+ *    and keep a stale instance alive after the daemon rebuilds it.
+ *  - Every entry point is funnelled through one serial queue.
+ *  - Redundant work is skipped: the daemon remembers the last mode it pushed to
+ *    the system and the publisher remembers the last state it broadcast, so
+ *    identical notifications do not re-enter the private thermal API.
+ *  - Only "off" is sent for mode 0; passing nil has no documented behavior.
  */
 
 static NSString *const PCRDomain = @"com.minis.powercuff-baldaran-trusted";
@@ -26,12 +25,17 @@ static const char *const PCRSettingsChanged =
 static const char *const PCRThermalsChanged =
     "com.minis.powercuff-baldaran-trusted.thermals";
 
+#define PCR_UNSET (-1)
+
 static os_log_t PCRLog;
 static dispatch_queue_t PCRQueue;
 static __weak id PCRProduct;
 static int PCRStateToken = -1;
 static int PCRThermalObsToken = -1;
 static int PCRSettingsObsToken = -1;
+static id PCRLPMObserver;
+static int PCRLastApplied = PCR_UNSET;    /* daemon side */
+static int PCRLastPublished = PCR_UNSET;  /* publisher side */
 
 static NSString *PCRModeName(uint64_t mode) {
     switch (mode) {
@@ -43,8 +47,8 @@ static NSString *PCRModeName(uint64_t mode) {
     }
 }
 
-/* Runs in thermalmonitord: push the published state into the system. */
-static void PCRApplyThermals(void) {
+/* thermalmonitord: push the published state into the system. */
+static void PCRApplyThermals(BOOL force) {
     if (PCRStateToken < 0) return;
 
     uint64_t mode = 0;
@@ -52,19 +56,26 @@ static void PCRApplyThermals(void) {
         os_log_error(PCRLog, "notify_get_state failed");
         return;
     }
+    if (mode > 4) mode = 0;
 
     id product = PCRProduct;
     if (!product) return;
 
+    if (!force && PCRLastApplied == (int)mode) return;
+
     SEL selector = @selector(putDeviceInThermalSimulationMode:);
-    if (![product respondsToSelector:selector]) return;
+    if (![product respondsToSelector:selector]) {
+        os_log_error(PCRLog, "thermal selector unavailable");
+        return;
+    }
 
     NSString *name = PCRModeName(mode);
     ((void (*)(id, SEL, id))objc_msgSend)(product, selector, name);
-    os_log_debug(PCRLog, "applied mode=%llu (%{public}@)", mode, name);
+    PCRLastApplied = (int)mode;
+    os_log(PCRLog, "applied mode=%llu (%{public}@)", mode, name);
 }
 
-/* Runs in SpringBoard: resolve preferences into an effective mode. */
+/* SpringBoard: resolve preferences into an effective mode. */
 static NSInteger PCREffectiveMode(void) {
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:PCRDomain];
 
@@ -78,14 +89,17 @@ static NSInteger PCREffectiveMode(void) {
     return mode;
 }
 
-/* Runs in SpringBoard: publish the effective mode to the daemon. */
-static void PCRPublishMode(void) {
+/* SpringBoard: publish the effective mode to the daemon. */
+static void PCRPublishMode(BOOL force) {
     if (PCRStateToken < 0) return;
 
     NSInteger mode = PCREffectiveMode();
+    if (!force && PCRLastPublished == (int)mode) return;
+
     notify_set_state(PCRStateToken, (uint64_t)mode);
     notify_post(PCRThermalsChanged);
-    os_log_debug(PCRLog, "published mode=%ld", (long)mode);
+    PCRLastPublished = (int)mode;
+    os_log(PCRLog, "published mode=%ld", (long)mode);
 }
 
 %group PCRThermalHooks
@@ -94,19 +108,25 @@ static void PCRPublishMode(void) {
     id product = %orig(arg1);
     if (product) {
         PCRProduct = product;
-        dispatch_async(PCRQueue, ^{ PCRApplyThermals(); });
+        dispatch_async(PCRQueue, ^{
+            PCRLastApplied = PCR_UNSET;   /* fresh object, no simulation yet */
+            PCRApplyThermals(YES);
+        });
     }
     return product;
 }
 %end
 
-/* GPProduct is a fallback used by some iOS builds; harmless when absent. */
+/* Some builds expose the thermal product under a different class. */
 %hook GPProduct
 - (id)initProduct:(id)arg1 {
     id product = %orig(arg1);
     if (product) {
         PCRProduct = product;
-        dispatch_async(PCRQueue, ^{ PCRApplyThermals(); });
+        dispatch_async(PCRQueue, ^{
+            PCRLastApplied = PCR_UNSET;
+            PCRApplyThermals(YES);
+        });
     }
     return product;
 }
@@ -117,7 +137,7 @@ static void PCRPublishMode(void) {
 %hook SpringBoard
 - (void)_batterySaverModeChanged:(NSInteger)arg1 {
     %orig;
-    dispatch_async(PCRQueue, ^{ PCRPublishMode(); });
+    dispatch_async(PCRQueue, ^{ PCRPublishMode(NO); });
 }
 %end
 %end
@@ -140,22 +160,30 @@ static void PCRPublishMode(void) {
 
         if (isThermal) {
             notify_register_dispatch(PCRThermalsChanged, &PCRThermalObsToken, PCRQueue,
-                                     ^(int token) { (void)token; PCRApplyThermals(); });
+                                     ^(int token) {
+                (void)token;
+                PCRApplyThermals(NO);
+            });
             %init(PCRThermalHooks);
         } else {
             notify_register_dispatch(PCRSettingsChanged, &PCRSettingsObsToken, PCRQueue,
-                                     ^(int token) { (void)token; PCRPublishMode(); });
+                                     ^(int token) {
+                (void)token;
+                PCRPublishMode(NO);
+            });
 
-            [[NSNotificationCenter defaultCenter]
+            /* _batterySaverModeChanged: is private and may be absent; its
+               notification is the documented, guaranteed path. */
+            PCRLPMObserver = [[NSNotificationCenter defaultCenter]
                 addObserverForName:NSProcessInfoPowerStateDidChangeNotification
                             object:nil
                              queue:nil
                         usingBlock:^(NSNotification *note) {
                 (void)note;
-                dispatch_async(PCRQueue, ^{ PCRPublishMode(); });
+                dispatch_async(PCRQueue, ^{ PCRPublishMode(NO); });
             }];
 
-            dispatch_async(PCRQueue, ^{ PCRPublishMode(); });
+            dispatch_async(PCRQueue, ^{ PCRPublishMode(YES); });
             %init(PCRSpringBoardHooks);
         }
     }

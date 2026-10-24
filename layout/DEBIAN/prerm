@@ -1,0 +1,7 @@
+#!/bin/sh
+# On removal write off to this package's own domain and notify the daemon to
+# clear its cached state. We do not modify the old com.rpetrich domain.
+defaults write com.minis.powercuff-baldaran-trusted PowerMode -int 0 2>/dev/null || true
+notify_post com.minis.powercuff-baldaran-trusted.thermals 2>/dev/null || true
+notify_post com.minis.powercuff-baldaran-trusted.settingschanged 2>/dev/null || true
+exit 0

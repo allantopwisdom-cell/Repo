@@ -1,0 +1,45 @@
+name: Build PowerCuff Baldaran RootHide arm64e
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      log_level:
+        description: 'Log level'
+        required: false
+        default: 'info'
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install roothide/theos and build
+      env:
+        THEOS: $HOME/theos
+      run: |
+        rm -rf $HOME/theos
+        git clone --depth 1 https://github.com/roothide/theos.git $HOME/theos
+        echo "$HOME/theos/bin" >> $GITHUB_PATH
+        make clean 2>/dev/null || true
+        make package messages=yes
+
+    - name: Upload deb artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: PowerCuff-Baldaran-Trusted-arm64e
+        path: packages/*.deb
+
+    - name: Create Release (on push to main)
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        DEB=$(ls packages/*.deb | head -1)
+        gh release create "v$(date +%Y%m%d)-${GITHUB_SHA:0:7}" \
+          --title "RootHide arm64e build $(date +%Y%m%d)" \
+          --generate-notes \
+          "$DEB"

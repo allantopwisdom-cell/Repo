@@ -1,0 +1,6 @@
+#!/bin/sh
+# Write defaults for the trusted domain so the tweak has valid state even if
+# no one opens Settings first. This does NOT touch any other package's keys.
+defaults write com.minis.powercuff-baldaran-trusted PowerMode -int 0
+defaults write com.minis.powercuff-baldaran-trusted RequireLowPowerMode -bool NO
+exit 0

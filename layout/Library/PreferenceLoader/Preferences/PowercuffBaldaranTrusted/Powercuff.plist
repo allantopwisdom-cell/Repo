@@ -17,9 +17,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Simulates a thermal pressure level through the system thermal subsystem. Defaults to Off. It does not freeze apps or cap frame rate.</string>
+			<string>通过系统热管理子系统模拟热压力等级，默认关闭。不会冻结后台应用，也不会限制帧率。</string>
 			<key>label</key>
-			<string>Thermal Simulation</string>
+			<string>热模拟档位</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -37,14 +37,14 @@
 			<key>key</key>
 			<string>PowerMode</string>
 			<key>label</key>
-			<string>Profile</string>
+			<string>模拟档位</string>
 			<key>validTitles</key>
 			<array>
-				<string>Off</string>
-				<string>Nominal</string>
-				<string>Light</string>
-				<string>Moderate</string>
-				<string>Heavy</string>
+				<string>关闭 (Off)</string>
+				<string>标称 (Nominal)</string>
+				<string>轻度 (Light)</string>
+				<string>中度 (Moderate)</string>
+				<string>重度 (Heavy)</string>
 			</array>
 			<key>validValues</key>
 			<array>
@@ -67,7 +67,7 @@
 			<key>key</key>
 			<string>RequireLowPowerMode</string>
 			<key>label</key>
-			<string>Only in Low Power Mode</string>
+			<string>仅在低电量模式下生效</string>
 		</dict>
 	</array>
 </dict>

@@ -1,8 +1,11 @@
 #!/bin/sh
-# On real removal, reload the daemon so the remaining process drops the hook.
+# Reload the daemon after real removal so no process keeps the hook loaded.
 case "$1" in
     remove|purge)
-        killall -9 thermalmonitord >/dev/null 2>&1 || true
+        if command -v launchctl >/dev/null 2>&1; then
+            launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1 || true
+        fi
+        command -v killall >/dev/null 2>&1 && killall -9 thermalmonitord >/dev/null 2>&1 || true
         ;;
 esac
 exit 0

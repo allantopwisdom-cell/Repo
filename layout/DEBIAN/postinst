@@ -1,15 +1,23 @@
 #!/bin/sh
-# Initialise this package's own domain only; never touch other PowerCuff keys.
+# Only this package's own domain is touched.
 DOMAIN=com.minis.powercuff-baldaran-trusted
 if command -v defaults >/dev/null 2>&1; then
     defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
     defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
 fi
 
-# Reload the injected processes so the tweak is actually active after install.
+# The library is only loaded into processes started after installation.
+# Restart the thermal daemon and reload SpringBoard so the tweak is active.
 if command -v launchctl >/dev/null 2>&1; then
     launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1 || true
 fi
-killall -9 thermalmonitord >/dev/null 2>&1 || true
-killall -9 SpringBoard >/dev/null 2>&1 || true
+command -v killall >/dev/null 2>&1 && killall -9 thermalmonitord >/dev/null 2>&1 || true
+
+if command -v sbreload >/dev/null 2>&1; then
+    sbreload >/dev/null 2>&1 || true
+elif command -v launchctl >/dev/null 2>&1 && launchctl kickstart -k system/com.apple.SpringBoard >/dev/null 2>&1; then
+    :
+else
+    command -v killall >/dev/null 2>&1 && killall -9 SpringBoard >/dev/null 2>&1 || true
+fi
 exit 0

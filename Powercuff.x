@@ -1,6 +1,7 @@
 #import <notify.h>
 #import <Foundation/Foundation.h>
 #import <roothide.h>
+#import <objc/runtime.h>
 
 static const char *const PCR_SETTINGS_CHANGED =
     "com.minis.powercuff-baldaran-trusted.settingschanged";
@@ -19,21 +20,18 @@ static NSString *PCPreferencesPath(void) {
     return jbroot(raw);
 }
 
-static BOOL IsValidProduct(id obj) {
-    return gProductClass && obj && [obj isKindOfClass:gProductClass];
-}
-
 static void ApplyThermals(void) {
     uint64_t mode = 0;
     notify_get_state(token, &mode);
     NSArray *modes = @[@"off", @"nominal", @"light", @"moderate", @"heavy"];
-    if (IsValidProduct(currentTarget)) {
-        if ([currentTarget respondsToSelector:@selector(putDeviceInThermalSimulationMode:)]) {
+    if (gProductClass && currentTarget && [currentTarget isKindOfClass:gProductClass]) {
+        SEL sel = @selector(putDeviceInThermalSimulationMode:);
+        if ([currentTarget respondsToSelector:sel]) {
             if (mode == 0) {
-                [currentTarget putDeviceInThermalSimulationMode:nil];
-                [currentTarget putDeviceInThermalSimulationMode:@"off"];
+                ((void (*)(id, SEL, id))objc_msgSend)(currentTarget, sel, nil);
+                ((void (*)(id, SEL, id))objc_msgSend)(currentTarget, sel, @"off");
             } else if (mode < (uint64_t)modes.count) {
-                [currentTarget putDeviceInThermalSimulationMode:modes[mode]];
+                ((void (*)(id, SEL, id))objc_msgSend)(currentTarget, sel, modes[mode]);
             }
         }
     }
@@ -56,8 +54,8 @@ static void LoadSettings(void) {
 %hook CommonProduct
 - (id)initProduct:(id)arg1 {
     id obj = %orig(arg1);
-    gProductClass = [CommonProduct class];
-    if (IsValidProduct(obj)) {
+    if (!gProductClass) gProductClass = [CommonProduct class];
+    if (gProductClass && obj && [obj isKindOfClass:gProductClass]) {
         currentTarget = obj;
         ApplyThermals();
     }
@@ -68,10 +66,8 @@ static void LoadSettings(void) {
 %hook GPProduct
 - (id)initProduct:(id)arg1 {
     id obj = %orig(arg1);
-    if (!gProductClass) {
-        gProductClass = [GPProduct class];
-    }
-    if (IsValidProduct(obj)) {
+    if (!gProductClass) gProductClass = [GPProduct class];
+    if (gProductClass && obj && [obj isKindOfClass:gProductClass]) {
         currentTarget = obj;
         ApplyThermals();
     }

@@ -17,7 +17,7 @@ static const NSString *const PCRSettingsChanged =
 static const NSString *const PCRThermalsChanged   =
     @"com.minis.powercuff-baldaran-trusted.thermals";
 
-static id<NSObject> currentTarget;
+static id currentTarget;
 static int token;
 
 /* Read the user's preference key from the trusted domain. The path is only
@@ -101,7 +101,7 @@ static void LoadSettings(void) {
 %end
 
 %ctor {
-    notify_register_check(PCRThermalsChanged, &token);
+    notify_register_check([PCRThermalsChanged UTF8String], &token);
 
     NSString *procName = [[NSProcessInfo processInfo] processName];
 
@@ -109,18 +109,22 @@ static void LoadSettings(void) {
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             NULL, (CFNotificationCallback)ApplyThermals,
-            PCRThermalsChanged, NULL,
+            (__bridge CFStringRef)PCRThermalsChanged, NULL,
             CFNotificationSuspensionBehaviorCoalesce);
         %init(thermalmonitord);
     } else {
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             NULL, (CFNotificationCallback)LoadSettings,
-            PCRSettingsChanged, NULL,
+            (__bridge CFStringRef)PCRSettingsChanged, NULL,
             CFNotificationSuspensionBehaviorCoalesce);
 
         if ([procName isEqualToString:@"SpringBoard"]) {
             LoadSettings();
+        }
+    }
+}
+s();
         }
     }
 }

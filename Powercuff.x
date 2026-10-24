@@ -1,7 +1,8 @@
 #import <notify.h>
 #import <Foundation/Foundation.h>
-#import <roothide.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
+#import <roothide.h>
 
 static const char *const PCR_SETTINGS_CHANGED =
     "com.minis.powercuff-baldaran-trusted.settingschanged";

@@ -7,4 +7,3 @@ Maintainer: Minis
 Author: rpetrich, dlevi309, Baldaran, Minis
 Section: Tweaks
 Description: PowerCuff thermal simulation profiles for RootHide. Uses only CommonProduct/GPProduct via the original Baldaran logic. Defaults to off. Does not freeze background processes or enforce frame rate caps.
-Installed-Size: 0

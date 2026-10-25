@@ -1,15 +1,15 @@
 #!/bin/sh
-# Standard behaviour: do not reload SpringBoard here. Sileo/apt shows its own
-# "Respring" prompt after the install and the user triggers it manually.
 DOMAIN=com.minis.powercuff-baldaran-trusted
+
 if command -v defaults >/dev/null 2>&1; then
-    defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
-    defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
+    if ! defaults read "$DOMAIN" PowerMode >/dev/null 2>&1; then
+        defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
+    fi
+    if ! defaults read "$DOMAIN" RequireLowPowerMode >/dev/null 2>&1; then
+        defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
+    fi
 fi
 
-# thermalmonitord is NOT restarted by a respring, so it must be reloaded here or
-# the thermal side would keep running the old image. This is headless and causes
-# no visible interruption.
 if command -v launchctl >/dev/null 2>&1; then
     launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1 || true
 fi

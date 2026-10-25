@@ -1,10 +1,14 @@
 #!/bin/sh
-# Force the profile back to off before the library disappears, then notify.
 DOMAIN=com.minis.powercuff-baldaran-trusted
-if command -v defaults >/dev/null 2>&1; then
-    defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
-    defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
-fi
-notify_post com.minis.powercuff-baldaran-trusted.settingschanged 2>/dev/null || true
-notify_post com.minis.powercuff-baldaran-trusted.thermals 2>/dev/null || true
+
+case "$1" in
+    remove|purge)
+        if command -v defaults >/dev/null 2>&1; then
+            defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
+            defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
+        fi
+        notify_post "$DOMAIN.settingschanged" 2>/dev/null || true
+        notify_post "$DOMAIN.thermals" 2>/dev/null || true
+        ;;
+esac
 exit 0

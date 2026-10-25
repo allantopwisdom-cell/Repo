@@ -48,17 +48,22 @@ static void PCRNote(NSString *key, NSInteger value) {
 /* Environment probes: recorded once per process so a single `defaults read`
    tells us whether the library loaded and which thermal API this OS exposes. */
 static void PCRProbeEnvironment(BOOL isThermal) {
-    PCRNote(@"LoaderSeen", 1);
-    PCRNote(@"Role", isThermal ? 1 : 2);   /* 1 = thermalmonitord, 2 = SpringBoard */
+    /* Both processes share one preference domain, so every key is prefixed to
+       avoid one process overwriting the other's result. */
+    NSString *p = isThermal ? @"T_" : @"S_";
+
+    PCRNote([p stringByAppendingString:@"LoaderSeen"], 1);
 
     Class common = objc_getClass("CommonProduct");
     Class gp = objc_getClass("GPProduct");
     SEL sel = @selector(putDeviceInThermalSimulationMode:);
 
-    PCRNote(@"HasCommonProduct", common ? 1 : 0);
-    PCRNote(@"HasGPProduct", gp ? 1 : 0);
-    PCRNote(@"CommonHasSelector", (common && class_getInstanceMethod(common, sel)) ? 1 : 0);
-    PCRNote(@"GPHasSelector", (gp && class_getInstanceMethod(gp, sel)) ? 1 : 0);
+    PCRNote([p stringByAppendingString:@"HasCommonProduct"], common ? 1 : 0);
+    PCRNote([p stringByAppendingString:@"HasGPProduct"], gp ? 1 : 0);
+    PCRNote([p stringByAppendingString:@"CommonHasSelector"],
+            (common && class_getInstanceMethod(common, sel)) ? 1 : 0);
+    PCRNote([p stringByAppendingString:@"GPHasSelector"],
+            (gp && class_getInstanceMethod(gp, sel)) ? 1 : 0);
 }
 
 static NSString *PCRModeName(uint64_t mode) {

@@ -2,6 +2,7 @@
 #import <notify.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#include <time.h>
 #import <os/log.h>
 
 /*
@@ -37,6 +38,13 @@ static id PCRLPMObserver;
 static int PCRLastApplied = PCR_UNSET;    /* daemon side */
 static int PCRLastPublished = PCR_UNSET;  /* publisher side */
 
+/* Diagnostics: written through cfprefsd so RootHide redirects them the same
+   way as the panel's own keys. Read back with `defaults read`. */
+static void PCRNote(NSString *key, NSInteger value) {
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:PCRDomain];
+    [defaults setInteger:value forKey:key];
+}
+
 static NSString *PCRModeName(uint64_t mode) {
     switch (mode) {
         case 1: return @"nominal";
@@ -66,12 +74,17 @@ static void PCRApplyThermals(BOOL force) {
     SEL selector = @selector(putDeviceInThermalSimulationMode:);
     if (![product respondsToSelector:selector]) {
         os_log_error(PCRLog, "thermal selector unavailable");
+        PCRNote(@"SelectorMissing", 1);
         return;
     }
 
     NSString *name = PCRModeName(mode);
     ((void (*)(id, SEL, id))objc_msgSend)(product, selector, name);
     PCRLastApplied = (int)mode;
+
+    PCRNote(@"SelectorMissing", 0);
+    PCRNote(@"LastApplied", (NSInteger)mode);
+    PCRNote(@"AppliedAt", (NSInteger)time(NULL));
     os_log(PCRLog, "applied mode=%llu (%{public}@)", mode, name);
 }
 
@@ -110,6 +123,7 @@ static void PCRPublishMode(BOOL force) {
         PCRProduct = product;
         dispatch_async(PCRQueue, ^{
             PCRLastApplied = PCR_UNSET;   /* fresh object, no simulation yet */
+            PCRNote(@"HookSeen", 1);
             PCRApplyThermals(YES);
         });
     }
@@ -125,6 +139,7 @@ static void PCRPublishMode(BOOL force) {
         PCRProduct = product;
         dispatch_async(PCRQueue, ^{
             PCRLastApplied = PCR_UNSET;
+            PCRNote(@"HookSeen", 1);
             PCRApplyThermals(YES);
         });
     }

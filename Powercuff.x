@@ -29,7 +29,8 @@ static const char *const PCRThermalsChanged =
 
 #define PCR_UNSET (-1)
 
-static const char *const PCRLoadedName  = "com.minis.powercuff-baldaran-trusted.loaded";
+static const char *const PCRLoadedThermal = "com.minis.powercuff-baldaran-trusted.loaded.t";
+static const char *const PCRLoadedSB      = "com.minis.powercuff-baldaran-trusted.loaded.s";
 static const char *const PCRHookName    = "com.minis.powercuff-baldaran-trusted.hook";
 static const char *const PCRAppliedName = "com.minis.powercuff-baldaran-trusted.applied";
 
@@ -42,7 +43,8 @@ static int PCRSettingsObsToken = -1;
 static id PCRLPMObserver;
 static int PCRLastApplied = PCR_UNSET;    /* daemon side */
 static int PCRLastPublished = PCR_UNSET;  /* publisher side */
-static int PCRLoadedToken = -1;
+static int PCRLoadedThermalToken = -1;
+static int PCRLoadedSBToken = -1;
 static int PCRHookToken = -1;
 static int PCRAppliedToken = -1;
 
@@ -216,10 +218,11 @@ static void PCRPublishMode(BOOL force) {
         PCRQueue = dispatch_queue_create("com.minis.powercuff-baldaran-trusted.queue",
                                          DISPATCH_QUEUE_SERIAL);
 
-        notify_register_check(PCRLoadedName, &PCRLoadedToken);
+        notify_register_check(PCRLoadedThermal, &PCRLoadedThermalToken);
+        notify_register_check(PCRLoadedSB, &PCRLoadedSBToken);
         notify_register_check(PCRHookName, &PCRHookToken);
         notify_register_check(PCRAppliedName, &PCRAppliedToken);
-        PCRSetState(PCRLoadedToken, isThermal ? 1 : 2);   /* 1 = daemon, 2 = SpringBoard */
+        PCRSetState(isThermal ? PCRLoadedThermalToken : PCRLoadedSBToken, 1);
 
         if (notify_register_check(PCRThermalsChanged, &PCRStateToken) != NOTIFY_STATUS_OK) {
             os_log_error(PCRLog, "notify_register_check failed");

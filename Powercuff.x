@@ -45,6 +45,22 @@ static void PCRNote(NSString *key, NSInteger value) {
     [defaults setInteger:value forKey:key];
 }
 
+/* Environment probes: recorded once per process so a single `defaults read`
+   tells us whether the library loaded and which thermal API this OS exposes. */
+static void PCRProbeEnvironment(BOOL isThermal) {
+    PCRNote(@"LoaderSeen", 1);
+    PCRNote(@"Role", isThermal ? 1 : 2);   /* 1 = thermalmonitord, 2 = SpringBoard */
+
+    Class common = objc_getClass("CommonProduct");
+    Class gp = objc_getClass("GPProduct");
+    SEL sel = @selector(putDeviceInThermalSimulationMode:);
+
+    PCRNote(@"HasCommonProduct", common ? 1 : 0);
+    PCRNote(@"HasGPProduct", gp ? 1 : 0);
+    PCRNote(@"CommonHasSelector", (common && class_getInstanceMethod(common, sel)) ? 1 : 0);
+    PCRNote(@"GPHasSelector", (gp && class_getInstanceMethod(gp, sel)) ? 1 : 0);
+}
+
 static NSString *PCRModeName(uint64_t mode) {
     switch (mode) {
         case 1: return @"nominal";
@@ -172,6 +188,8 @@ static void PCRPublishMode(BOOL force) {
             os_log_error(PCRLog, "notify_register_check failed");
             PCRStateToken = -1;
         }
+
+        PCRProbeEnvironment(isThermal);
 
         if (isThermal) {
             notify_register_dispatch(PCRThermalsChanged, &PCRThermalObsToken, PCRQueue,

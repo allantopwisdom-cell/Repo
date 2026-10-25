@@ -152,11 +152,17 @@ static void PCRPublishModeAttempt(BOOL force, int attempt) {
     NSInteger mode = PCREffectiveMode(&hasValue);
 
     /* Right after SpringBoard launches, cfprefsd may not have handed the domain
-       over yet. Publishing 0 in that window would silently switch the profile
-       off until the user touches a setting, so retry instead of guessing. */
-    if (!hasValue && attempt < 5) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
-                       PCRQueue, ^{ PCRPublishModeAttempt(force, attempt + 1); });
+       over yet. Publishing a guessed 0 there would silently switch the user's
+       profile off, so fast-retry first and then give up *without publishing*:
+       a wrong value is worse than a stale one, and the delayed re-checks below
+       will publish as soon as the domain becomes readable. */
+    if (!hasValue) {
+        if (attempt < 5) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
+                           PCRQueue, ^{ PCRPublishModeAttempt(force, attempt + 1); });
+        } else {
+            os_log_error(PCRLog, "preferences unavailable, not publishing");
+        }
         return;
     }
 
@@ -271,6 +277,14 @@ static void PCRPublishMode(BOOL force) {
             }];
 
             dispatch_async(PCRQueue, ^{ PCRPublishMode(YES); });
+
+            /* The preference domain can become readable well after launch; keep
+               re-checking for a while so a late-arriving value still wins. */
+            for (NSNumber *delay in @[@3, @10, @30, @60]) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                             (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
+                               PCRQueue, ^{ PCRPublishMode(NO); });
+            }
             %init(PCRSpringBoardHooks);
         }
     }

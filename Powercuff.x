@@ -29,6 +29,10 @@ static const char *const PCRThermalsChanged =
 
 #define PCR_UNSET (-1)
 
+static const char *const PCRLoadedName  = "com.minis.powercuff-baldaran-trusted.loaded";
+static const char *const PCRHookName    = "com.minis.powercuff-baldaran-trusted.hook";
+static const char *const PCRAppliedName = "com.minis.powercuff-baldaran-trusted.applied";
+
 static os_log_t PCRLog;
 static dispatch_queue_t PCRQueue;
 static __weak id PCRProduct;
@@ -38,6 +42,15 @@ static int PCRSettingsObsToken = -1;
 static id PCRLPMObserver;
 static int PCRLastApplied = PCR_UNSET;    /* daemon side */
 static int PCRLastPublished = PCR_UNSET;  /* publisher side */
+static int PCRLoadedToken = -1;
+static int PCRHookToken = -1;
+static int PCRAppliedToken = -1;
+
+/* notify state is kernel-side: it works even where the sandbox blocks file or
+   preference writes, which is why diagnostics go through it. */
+static void PCRSetState(int token, uint64_t value) {
+    if (token >= 0) notify_set_state(token, value);
+}
 
 /* Diagnostics: written through cfprefsd so RootHide redirects them the same
    way as the panel's own keys. Read back with `defaults read`. */
@@ -97,6 +110,7 @@ static void PCRApplyThermals(BOOL force) {
     if (![product respondsToSelector:selector]) {
         os_log_error(PCRLog, "thermal selector unavailable");
         PCRNote(@"SelectorMissing", 1);
+        PCRSetState(PCRAppliedToken, 99);   /* 99 = selector missing */
         return;
     }
 
@@ -107,6 +121,7 @@ static void PCRApplyThermals(BOOL force) {
     PCRNote(@"SelectorMissing", 0);
     PCRNote(@"LastApplied", (NSInteger)mode);
     PCRNote(@"AppliedAt", (NSInteger)time(NULL));
+    PCRSetState(PCRAppliedToken, mode);
     os_log(PCRLog, "applied mode=%llu (%{public}@)", mode, name);
 }
 
@@ -146,6 +161,7 @@ static void PCRPublishMode(BOOL force) {
         dispatch_async(PCRQueue, ^{
             PCRLastApplied = PCR_UNSET;   /* fresh object, no simulation yet */
             PCRNote(@"HookSeen", 1);
+            PCRSetState(PCRHookToken, 1);
             PCRApplyThermals(YES);
         });
     }
@@ -162,6 +178,7 @@ static void PCRPublishMode(BOOL force) {
         dispatch_async(PCRQueue, ^{
             PCRLastApplied = PCR_UNSET;
             PCRNote(@"HookSeen", 1);
+            PCRSetState(PCRHookToken, 1);
             PCRApplyThermals(YES);
         });
     }
@@ -198,6 +215,11 @@ static void PCRPublishMode(BOOL force) {
         PCRLog = os_log_create("com.minis.powercuff-baldaran-trusted", "tweak");
         PCRQueue = dispatch_queue_create("com.minis.powercuff-baldaran-trusted.queue",
                                          DISPATCH_QUEUE_SERIAL);
+
+        notify_register_check(PCRLoadedName, &PCRLoadedToken);
+        notify_register_check(PCRHookName, &PCRHookToken);
+        notify_register_check(PCRAppliedName, &PCRAppliedToken);
+        PCRSetState(PCRLoadedToken, isThermal ? 1 : 2);   /* 1 = daemon, 2 = SpringBoard */
 
         if (notify_register_check(PCRThermalsChanged, &PCRStateToken) != NOTIFY_STATUS_OK) {
             os_log_error(PCRLog, "notify_register_check failed");

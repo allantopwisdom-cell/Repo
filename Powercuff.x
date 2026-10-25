@@ -128,10 +128,13 @@ static void PCRApplyThermals(BOOL force) {
 }
 
 /* SpringBoard: resolve preferences into an effective mode. */
-static NSInteger PCREffectiveMode(void) {
+static NSInteger PCREffectiveMode(BOOL *hasValue) {
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:PCRDomain];
 
-    NSInteger mode = [defaults integerForKey:@"PowerMode"];
+    id raw = [defaults objectForKey:@"PowerMode"];
+    if (hasValue) *hasValue = (raw != nil);
+
+    NSInteger mode = raw ? [raw integerValue] : 0;
     if (mode < 0 || mode > 4) mode = 0;
 
     if ([defaults boolForKey:@"RequireLowPowerMode"] &&
@@ -142,16 +145,31 @@ static NSInteger PCREffectiveMode(void) {
 }
 
 /* SpringBoard: publish the effective mode to the daemon. */
-static void PCRPublishMode(BOOL force) {
+static void PCRPublishModeAttempt(BOOL force, int attempt) {
     if (PCRStateToken < 0) return;
 
-    NSInteger mode = PCREffectiveMode();
+    BOOL hasValue = NO;
+    NSInteger mode = PCREffectiveMode(&hasValue);
+
+    /* Right after SpringBoard launches, cfprefsd may not have handed the domain
+       over yet. Publishing 0 in that window would silently switch the profile
+       off until the user touches a setting, so retry instead of guessing. */
+    if (!hasValue && attempt < 5) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
+                       PCRQueue, ^{ PCRPublishModeAttempt(force, attempt + 1); });
+        return;
+    }
+
     if (!force && PCRLastPublished == (int)mode) return;
 
     notify_set_state(PCRStateToken, (uint64_t)mode);
     notify_post(PCRThermalsChanged);
     PCRLastPublished = (int)mode;
-    os_log(PCRLog, "published mode=%ld", (long)mode);
+    os_log(PCRLog, "published mode=%ld (attempt %d)", (long)mode, attempt);
+}
+
+static void PCRPublishMode(BOOL force) {
+    PCRPublishModeAttempt(force, 0);
 }
 
 %group PCRThermalHooks
@@ -204,12 +222,8 @@ static void PCRPublishMode(BOOL force) {
         BOOL isThermal = [process isEqualToString:@"thermalmonitord"];
         BOOL isSpringBoard = [process isEqualToString:@"SpringBoard"];
 
-        /* Load markers, written before any filtering, through two channels, so
-           "library not loaded" can be told apart from "prefs write denied". */
-        NSString *markerPath = [NSString stringWithFormat:@"/var/tmp/powercuff-%@.marker", process];
-        NSString *markerText = [NSString stringWithFormat:@"pid=%d role=%@", getpid(), process];
-        [markerText writeToFile:markerPath atomically:YES
-                       encoding:NSUTF8StringEncoding error:NULL];
+        /* Secondary load marker. The authoritative one is the notify state set
+           below, because sandboxed processes cannot always write preferences. */
         PCRNote([@"SEEN_" stringByAppendingString:process], 1);
 
         if (!isThermal && !isSpringBoard) return;

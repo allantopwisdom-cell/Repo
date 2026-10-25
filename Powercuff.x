@@ -3,6 +3,7 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <time.h>
+#include <unistd.h>
 #import <os/log.h>
 
 /*
@@ -183,6 +184,15 @@ static void PCRPublishMode(BOOL force) {
         NSString *process = [[NSProcessInfo processInfo] processName];
         BOOL isThermal = [process isEqualToString:@"thermalmonitord"];
         BOOL isSpringBoard = [process isEqualToString:@"SpringBoard"];
+
+        /* Load markers, written before any filtering, through two channels, so
+           "library not loaded" can be told apart from "prefs write denied". */
+        NSString *markerPath = [NSString stringWithFormat:@"/var/tmp/powercuff-%@.marker", process];
+        NSString *markerText = [NSString stringWithFormat:@"pid=%d role=%@", getpid(), process];
+        [markerText writeToFile:markerPath atomically:YES
+                       encoding:NSUTF8StringEncoding error:NULL];
+        PCRNote([@"SEEN_" stringByAppendingString:process], 1);
+
         if (!isThermal && !isSpringBoard) return;
 
         PCRLog = os_log_create("com.minis.powercuff-baldaran-trusted", "tweak");

@@ -21,12 +21,16 @@ def ar_members(path):
         header = data[offset:offset + 60]
         assert len(header) == 60 and header[58:] == b'`\n', 'invalid ar header'
         size = int(header[48:58])
+        assert size >= 0, 'negative ar member size'
         name = header[:16].decode().strip().rstrip('/')
         payload = data[offset + 60:offset + 60 + size]
         assert len(payload) == size, 'truncated member'
         assert name not in result, 'duplicate ar member'
         result[name] = payload
         offset += 60 + size + (size & 1)
+        assert offset <= len(data), 'missing ar padding'
+        if size & 1:
+            assert data[offset - 1:offset] == b'\n', 'invalid ar padding'
     assert result.get('debian-binary') == b'2.0\n'
     return result
 
@@ -36,12 +40,13 @@ def tar_members(data):
         result, seen = {}, set()
         for item in archive:
             name = item.name.removeprefix('./').rstrip('/')
-            assert not name.startswith('/') and '..' not in name.split('/'), 'unsafe package path'
+            assert name == '.' and item.isdir() or all(part not in ('', '.', '..') for part in name.split('/')), 'unsafe/noncanonical package path'
             assert name not in seen, 'duplicate archive path'
             seen.add(name)
             assert item.isdir() or item.isfile(), 'links and special files are forbidden'
             assert (item.uid, item.gid) == (0, 0) and not item.mode & 0o7022, 'unsafe numeric ownership or permissions'
             if item.isdir():
+                assert item.mode == 0o755, 'package directory must be traversable mode 0755'
                 continue
             result[name] = (item, archive.extractfile(item).read())
         return result
@@ -51,6 +56,7 @@ def verify(path, expected_version):
     members = ar_members(path)
     control_name, = [key for key in members if key.startswith('control.tar.')]
     data_name, = [key for key in members if key.startswith('data.tar.')]
+    assert set(members) == {'debian-binary', control_name, data_name}, 'unexpected ar member'
     controls, files = tar_members(members[control_name]), tar_members(members[data_name])
     assert set(controls) <= {'control', 'postinst', 'prerm', 'postrm', 'md5sums'}, 'unexpected control script'
     control = controls['control'][1].decode()

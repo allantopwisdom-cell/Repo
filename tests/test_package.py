@@ -21,6 +21,28 @@ class PayloadValidation(unittest.TestCase):
     def test_regular_file(self):
         self.assertIn('valid', tar_members(self.archive(('valid', tarfile.REGTYPE, 0o644))))
 
+    def test_directories_must_be_traversable(self):
+        tar_members(self.archive(('.', tarfile.DIRTYPE, 0o755), ('Library', tarfile.DIRTYPE, 0o755)))
+        for mode in (0, 0o644, 0o700, 0o777):
+            with self.assertRaisesRegex(AssertionError, 'directory|permissions'):
+                tar_members(self.archive(('Library', tarfile.DIRTYPE, mode)))
+
+    def test_noncanonical_paths(self):
+        for name in ('Library//x', 'Library/./x', '././Library/x', '', '/x'):
+            with self.assertRaisesRegex(AssertionError, 'path'):
+                tar_members(self.archive((name, tarfile.REGTYPE, 0o644)))
+
+    def test_ar_negative_size_and_missing_padding(self):
+        import tempfile
+        from verify_package import ar_members
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'bad.deb'
+            for size, content in ((-1, b''), (1, b'x')):
+                header = f'{"x/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{size:<10}`\n'.encode()
+                path.write_bytes(b'!<arch>\n' + header + content)
+                with self.assertRaises(AssertionError):
+                    ar_members(path)
+
     def test_link_and_special_members(self):
         for kind in (tarfile.SYMTYPE, tarfile.LNKTYPE, tarfile.CHRTYPE, tarfile.FIFOTYPE):
             with self.assertRaises(AssertionError):

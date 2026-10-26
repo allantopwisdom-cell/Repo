@@ -24,6 +24,22 @@ int main(void) {
         assert(PCRNeedsSeparateHook(alias, base, init));
         assert(PCRNeedsSeparateHook(unrelated, base, init));
         assert(!PCRNeedsSeparateHook(Nil, base, init));
+        assert(PCRMethodMatches(base, init, '@'));
+        assert(!PCRMethodMatches(Nil, init, '@'));
+        assert(!PCRMethodMatches(base, init, 'v'));
+        assert(PCRObjectEncoding("@\"NSString\""));
+        assert(!PCRObjectEncoding("@?"));
+        const char *encodings[] = {"v@:@", "v@:@?", "v@:q", "@@:@", "@?@:@", "v@:", "v@:@i"};
+        const BOOL valid[] = {YES, NO, NO, NO, NO, NO, NO};
+        for (unsigned i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i) {
+            SEL probe = NSSelectorFromString([NSString stringWithFormat:@"probe%u:", i]);
+            assert(class_addMethod(base, probe, (IMP)SharedInit, encodings[i]));
+            assert(PCRMethodMatches(base, probe, 'v') == valid[i]);
+        }
+        SEL blockInit = sel_registerName("blockInit:");
+        assert(class_addMethod(base, blockInit, (IMP)SharedInit, "@?@:@"));
+        assert(!PCRMethodMatches(base, blockInit, '@'));
+        puts("Runtime ABI: block, scalar, wrong return and argument count rejected PASS");
         puts("Runtime: inherited initializer skipped; aliased and unrelated equal-IMP methods require hooks PASS");
     }
 }

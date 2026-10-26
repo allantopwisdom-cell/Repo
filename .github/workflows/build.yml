@@ -1,86 +1,100 @@
-name: Build PowerCuff Baldaran RootHide arm64e
+name: Validate and build Powercuff RootHide
 
 on:
+  pull_request:
   push:
-    branches: [main, master]
+    branches: [main, master, 'audit/**']
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: powercuff-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
   THEOS: ${{ github.workspace }}/theos-roothide
+  THEOS_REF: cfba89a53a05b4a1b822121158acc3669c20602f
+  SDK_REF: 0222fd5413cf4b9af096f37b4621afa2688572f7
 
 jobs:
   build:
-    name: Build (roothide)
     runs-on: macos-14
     timeout-minutes: 25
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Source regression checks
+        run: sh scripts/check.sh
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '15.4'
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Theos path
-        run: |
-          echo "$THEOS/bin" >> "$GITHUB_PATH"
-          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
-          echo "THEOS_IGNORE_PARALLEL_BUILDING_NOTICE=yes" >> "$HOME/.theosrc"
-
-      - name: Checkout Theos (RootHide)
+      - name: Checkout pinned RootHide Theos
         uses: actions/checkout@v4
         with:
           repository: roothide/theos
+          ref: ${{ env.THEOS_REF }}
           path: theos-roothide
           submodules: recursive
-
-      - name: Install iOS SDK (iPhoneOS16.5)
+          persist-credentials: false
+      - name: Install pinned iOS 16.5 SDK
         run: |
           set -euo pipefail
-          mkdir -p "$THEOS/sdks"
-          if [ -d "$THEOS/sdks/iPhoneOS16.5.sdk" ]; then
-            echo "iPhoneOS16.5.sdk already present"
-            exit 0
-          fi
           SDK_STAGE="$(mktemp -d)"
           trap 'rm -rf "$SDK_STAGE"' EXIT
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$SDK_STAGE/sdks"
+          git clone --filter=blob:none --no-checkout https://github.com/theos/sdks.git "$SDK_STAGE/sdks"
           git -C "$SDK_STAGE/sdks" sparse-checkout set iPhoneOS16.5.sdk
+          git -C "$SDK_STAGE/sdks" checkout "$SDK_REF"
+          mkdir -p "$THEOS/sdks"
           cp -R "$SDK_STAGE/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
-          ls -1 "$THEOS/sdks"
-
-      - name: Install Theos dependencies
+      - name: Install dependencies
         run: |
           brew install ldid dpkg xz
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
-
-      - name: Build Package
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+      - name: Build and verify package
         run: |
-          chmod +x build.sh
+          set -euo pipefail
           sh build.sh roothide
-          echo "=== .deb files ==="
-          find ./packages -name "*.deb" -type f
-
-      - name: Upload Artifacts
+          VERSION=$(sed -n 's/^Version: //p' control)
+          count=$(find packages -name '*.deb' -type f | wc -l | tr -d ' ')
+          test "$count" = 1
+          PACKAGE=$(find packages -name '*.deb' -type f)
+          python3 scripts/verify_package.py "$PACKAGE" --version "$VERSION" | tee packages/verification.txt
+          shasum -a 256 "$PACKAGE" > packages/SHA256SUMS
+          git rev-parse HEAD > packages/SOURCE_COMMIT
+          printf 'THEOS=%s\nSDK=%s\n' "$THEOS_REF" "$SDK_REF" > packages/TOOLCHAIN_REFS
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "${GITHUB_REF#refs/tags/}" = "v$VERSION"
+          fi
+      - name: Upload verified package and provenance
         uses: actions/upload-artifact@v4
         with:
-          name: PowerCuff-Baldaran-Trusted-arm64e
-          path: ./packages/*.deb
+          name: Powercuff-RootHide-${{ github.sha }}
+          path: packages/
           if-no-files-found: error
+          retention-days: 90
 
-      - name: Create Release
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        uses: softprops/action-gh-release@v2
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          token: ${{ github.token }}
-          tag_name: v1.0.0-1
-          name: PowerCuff Baldaran Trusted RootHide v1.0.0-1
-          files: ./packages/*.deb
+          name: Powercuff-RootHide-${{ github.sha }}
+          path: packages
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Powercuff ${{ github.ref_name }} RootHide
+          draft: true
+          files: packages/*
+          fail_on_unmatched_files: true

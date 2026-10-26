@@ -30,7 +30,7 @@ fi
 cat <<'HELP'
 loaded.*=1: loader ran at least once; hook=1: product initializer was observed.
 applied 0..4: private method returned for that mode; 10: waiting; 98: ObjC exception; 99: ABI mismatch.
-thermals now contains a versioned 64-bit word, not a plain mode number.
+thermals contains a versioned 64-bit word with a daemon session; stale-session replies are rejected.
 Neither published nor applied state proves CPU throttling or battery improvement.
 Test Off -> Light -> Off, then the LPM gate, and inspect fresh daemon logs/crash reports.
 HELP

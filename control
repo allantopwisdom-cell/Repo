@@ -1,6 +1,6 @@
 Package: com.minis.powercuff-baldaran-trusted
 Name: Powercuff
-Version: 1.3.0
+Version: 1.3.1
 Architecture: iphoneos-arm64e
 Priority: optional
 Section: Tweaks
@@ -8,4 +8,4 @@ Maintainer: Minis
 Author: rpetrich, dlevi309, Baldaran, Minis
 Depends: mobilesubstrate (>= 0.9.9000), preferenceloader, firmware (>= 16.0), firmware (<< 17.0)
 Conflicts: com.rpetrich.powercuff, com.baldaran.powercuff-r3vamp, com.minis.powercuff-r3vamp-roothide, com.minis.powercuff-r3vamp-trusted
-Description: Thermal simulation profiles for iOS 16 and RootHide. Defaults to off; requires a respring after installation. Uses a validated notification protocol and runtime selector checks. Device compatibility and power savings require on-device testing.
+Description: Thermal simulation profiles for iOS 16 and RootHide. Defaults to off; requires a respring after installation. Uses a session-bound notification protocol and runtime selector checks. Device compatibility and power savings require on-device testing.

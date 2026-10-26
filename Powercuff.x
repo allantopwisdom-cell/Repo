@@ -5,6 +5,7 @@
 #import <os/log.h>
 #include <stdlib.h>
 #include "PCRProtocol.h"
+#import "PCRPreferences.h"
 
 static NSString *const PCRDomain = @"com.minis.powercuff-baldaran-trusted";
 static const char *const PCRSettingsChanged = "com.minis.powercuff-baldaran-trusted.settingschanged";
@@ -16,6 +17,9 @@ static dispatch_queue_t PCRQueue;
 static __weak id PCRProduct;
 static BOOL PCRApplyFailed;
 static int PCRStateToken = -1, PCRSettingsToken = -1, PCRRequestToken = -1;
+static int PCRRequestStateToken = -1;
+static uint32_t PCRSession, PCRLastPublishedSession;
+static NSUInteger PCRRequestGeneration;
 static int PCRLoadedToken = -1, PCRHookToken = -1, PCRAppliedToken = -1;
 static int PCRLastApplied = -1, PCRLastPublished = -1;
 static NSUInteger PCRGeneration;
@@ -62,7 +66,7 @@ static void PCRApplyThermals(void) {
         uint64_t state = 0;
         unsigned mode = 0;
         if (PCRStateToken < 0 || notify_get_state(PCRStateToken, &state) != NOTIFY_STATUS_OK ||
-            !PCRDecodeMode(state, &mode)) return;
+            !PCRDecodeMode(state, PCRSession, &mode)) return;
         id product = PCRProduct;
         if (!product || PCRApplyFailed || PCRLastApplied == (int)mode) return;
         SEL selector = @selector(putDeviceInThermalSimulationMode:);
@@ -90,44 +94,60 @@ static BOOL PCRReadMode(NSInteger *mode) {
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:PCRDomain];
     id raw = [defaults objectForKey:@"PowerMode"];
     if (!raw) return NO;
-    NSInteger value = 0;
-    if ([raw isKindOfClass:[NSNumber class]]) {
-        double number = [raw doubleValue];
-        if (number >= 0 && number <= 4 && number == (double)[raw integerValue])
-            value = [raw integerValue];
-    }
-    id gate = [defaults objectForKey:@"RequireLowPowerMode"];
-    if (gate && ![gate isKindOfClass:[NSNumber class]]) value = 0;
-    if ([gate isKindOfClass:[NSNumber class]] && [gate boolValue] &&
-        NSProcessInfo.processInfo.lowPowerModeEnabled == NO) value = 0;
-    *mode = value;
+    *mode = PCRValidatedMode(raw, [defaults objectForKey:@"RequireLowPowerMode"],
+                             NSProcessInfo.processInfo.lowPowerModeEnabled);
     return YES;
 }
 
 static void PCRPublishAttempt(BOOL force, unsigned attempt, NSUInteger generation) {
     @autoreleasepool {
         if (generation != PCRGeneration || PCRStateToken < 0) return;
+        uint64_t request = 0;
+        uint32_t session = 0;
+        BOOL haveSession = notify_get_state(PCRRequestStateToken, &request) == NOTIFY_STATUS_OK &&
+                           PCRDecodeRequest(request, &session);
         NSInteger mode = 0;
-        if (!PCRReadMode(&mode) && attempt < 5) {
+        BOOL havePrefs = PCRReadMode(&mode);
+        if ((!haveSession || !havePrefs) && attempt < 5) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 400 * NSEC_PER_MSEC), PCRQueue, ^{
                 PCRPublishAttempt(force, attempt + 1, generation);
             });
             return;
         }
-        // Missing key is also a valid first-install state. After bounded retries, use Off.
-        if (!force && PCRLastPublished == mode) return;
-        if (notify_set_state(PCRStateToken, PCREncodeMode((unsigned)mode)) != NOTIFY_STATUS_OK ||
+        if (!haveSession) return; // Never publish a value without a daemon session.
+        // A missing key remains the first-install default, after bounded retries.
+        if (!force && PCRLastPublished == mode && PCRLastPublishedSession == session) return;
+        if (notify_set_state(PCRStateToken, PCREncodeMode(session, (unsigned)mode)) != NOTIFY_STATUS_OK ||
             notify_post(PCRThermalsChanged) != NOTIFY_STATUS_OK) {
             os_log_error(PCRLog, "mode publication failed");
-            return; // Do not suppress a later retry after failure.
+            if (attempt < 5) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 400 * NSEC_PER_MSEC), PCRQueue, ^{
+                    PCRPublishAttempt(force, attempt + 1, generation);
+                });
+            }
+            return;
         }
         PCRLastPublished = (int)mode;
-        os_log(PCRLog, "published mode=%ld", (long)mode);
+        PCRLastPublishedSession = session;
+        os_log(PCRLog, "published mode=%ld session=%u", (long)mode, session);
     }
 }
 
 static void PCRPublish(BOOL force) {
     PCRPublishAttempt(force, 0, ++PCRGeneration);
+}
+
+static void PCRRequestFresh(unsigned attempt, NSUInteger generation) {
+    if (generation != PCRRequestGeneration || !PCRProduct || PCRLastApplied >= 0 || PCRApplyFailed) return;
+    if (notify_set_state(PCRRequestStateToken, PCREncodeRequest(PCRSession)) != NOTIFY_STATUS_OK ||
+        notify_post(PCRRequest) != NOTIFY_STATUS_OK)
+        os_log_error(PCRLog, "publisher request failed");
+    // Bounded recovery for a lost startup request; no continuous polling.
+    if (attempt < 5) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 400 * NSEC_PER_MSEC), PCRQueue, ^{
+            PCRRequestFresh(attempt + 1, generation);
+        });
+    }
 }
 
 static void PCRCaptureProduct(id product) {
@@ -140,9 +160,9 @@ static void PCRCaptureProduct(id product) {
         PCRApplyFailed = NO;
         PCRDiagnostic(PCRHookToken, 1);
         PCRDiagnostic(PCRAppliedToken, 10); // Waiting for a valid publisher state.
-        PCRApplyThermals();
-        if (notify_post(PCRRequest) != NOTIFY_STATUS_OK)
-            os_log_error(PCRLog, "publisher request failed");
+        do { PCRSession = arc4random(); } while (!PCRSession);
+        PCRRequestFresh(0, ++PCRRequestGeneration);
+        // Do not apply notify's cached value: only a reply matching this session is accepted.
     });
 }
 
@@ -181,7 +201,8 @@ static void PCRCaptureProduct(id product) {
         PCRRegister(isThermal ? "com.minis.powercuff-baldaran-trusted.loaded.t" :
                     "com.minis.powercuff-baldaran-trusted.loaded.s", &PCRLoadedToken);
         PCRDiagnostic(PCRLoadedToken, 1);
-        if (!PCRRegister(PCRThermalsChanged, &PCRStateToken)) return;
+        if (!PCRRegister(PCRThermalsChanged, &PCRStateToken) ||
+            !PCRRegister(PCRRequest, &PCRRequestStateToken)) return;
         if (isThermal) {
             PCRRegister("com.minis.powercuff-baldaran-trusted.hook", &PCRHookToken);
             PCRRegister("com.minis.powercuff-baldaran-trusted.applied", &PCRAppliedToken);
@@ -196,6 +217,11 @@ static void PCRCaptureProduct(id product) {
             // Compare BEFORE hooking: an inherited method needs only the base-class hook.
             BOOL gpOK = PCRMethodMatches(gp, init, '@') && PCRMethodMatches(gp, apply, 'v') &&
                 (!commonOK || class_getMethodImplementation(gp, init) != class_getMethodImplementation(common, init));
+            if (!commonOK && !gpOK) {
+                PCRDiagnostic(PCRAppliedToken, 99);
+                os_log_error(PCRLog, "no supported thermal initializer/API ABI; hooks disabled");
+                return;
+            }
             if (commonOK) { %init(PCRCommonHooks); }
             if (gpOK) { %init(PCRGPHooks); }
         } else {

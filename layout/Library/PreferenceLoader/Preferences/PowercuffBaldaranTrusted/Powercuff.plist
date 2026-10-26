@@ -17,7 +17,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>模拟系统热压力等级，默认关闭。不会冻结后台应用，也不会限制帧率。</string>
+			<string>模拟系统热压力等级，默认关闭。可能影响性能和帧率；实际省电效果需实测。安装或升级后请先注销一次。</string>
 			<key>label</key>
 			<string>热模拟档位</string>
 		</dict>
@@ -33,7 +33,7 @@
 			<key>detail</key>
 			<string>PSListItemsController</string>
 			<key>footerText</key>
-			<string>Selects a simulated thermal profile. Changes apply immediately.</string>
+			<string>注销并成功注入后，修改档位通过通知下发。建议从轻度开始测试。</string>
 			<key>key</key>
 			<string>PowerMode</string>
 			<key>label</key>

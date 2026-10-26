@@ -3,7 +3,7 @@ name: Validate and build Powercuff RootHide
 on:
   pull_request:
   push:
-    branches: [main, master, 'audit/**', 'fix/**']
+    branches: [main, master, 'audit/**', 'fix/**', 'review/**']
   workflow_dispatch:
 
 permissions:
@@ -65,6 +65,7 @@ jobs:
           count=$(find packages -name '*.deb' -type f | wc -l | tr -d ' ')
           test "$count" = 1
           PACKAGE=$(find packages -name '*.deb' -type f)
+          python3 scripts/normalize_package.py "$PACKAGE" --epoch "$(git log -1 --format=%ct)"
           python3 scripts/verify_package.py "$PACKAGE" --version "$VERSION" | tee packages/verification.txt
           python3 scripts/test_built_package.py "$PACKAGE" | tee -a packages/verification.txt
           (cd packages && shasum -a 256 "$(basename "$PACKAGE")" > SHA256SUMS)

@@ -1,11 +1,15 @@
 #!/bin/sh
-# Reload the daemon after real removal so no process keeps the hook loaded.
-case "$1" in
-    remove|purge)
-        if command -v launchctl >/dev/null 2>&1; then
-            launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1 || true
+# On remove the files are gone; restart once to unload the old hook.
+# Purge after remove must not restart the daemon a second time.
+case "${1:-}" in
+    remove)
+        if command -v launchctl >/dev/null 2>&1 &&
+           launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1; then
+            :
+        elif command -v killall >/dev/null 2>&1; then
+            killall -TERM thermalmonitord >/dev/null 2>&1 || true
         fi
-        command -v killall >/dev/null 2>&1 && killall -9 thermalmonitord >/dev/null 2>&1 || true
+        echo 'Powercuff removed: respring once to unload the SpringBoard publisher.'
         ;;
 esac
 exit 0

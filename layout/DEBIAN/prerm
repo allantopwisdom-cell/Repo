@@ -1,14 +1,4 @@
 #!/bin/sh
-DOMAIN=com.minis.powercuff-baldaran-trusted
-
-case "$1" in
-    remove|purge)
-        if command -v defaults >/dev/null 2>&1; then
-            defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
-            defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
-        fi
-        notify_post "$DOMAIN.settingschanged" 2>/dev/null || true
-        notify_post "$DOMAIN.thermals" 2>/dev/null || true
-        ;;
-esac
+# Do not alter mobile preferences from a root maintainer script or broadcast stale state.
+# postrm remove unloads the daemon hook. Upgrades preserve user settings.
 exit 0

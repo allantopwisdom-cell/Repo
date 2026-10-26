@@ -7,7 +7,10 @@ case "${1:-}" in
            launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1; then
             :
         elif command -v killall >/dev/null 2>&1; then
-            killall -TERM thermalmonitord >/dev/null 2>&1 || true
+            killall -TERM thermalmonitord >/dev/null 2>&1 ||
+                echo 'Powercuff: thermal daemon reload could not be confirmed; respring/reboot and verify.' >&2
+        else
+            echo 'Powercuff: no daemon reload command available; respring/reboot and verify.' >&2
         fi
         echo 'Powercuff removed: respring once to unload the SpringBoard publisher.'
         ;;

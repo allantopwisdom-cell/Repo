@@ -22,6 +22,8 @@ PY
 if [ "$(uname -s)" = Darwin ]; then
     clang -fobjc-arc -Wall -Wextra -Werror -I. -framework Foundation -framework CoreFoundation tests/test_preferences.m -o "$prefout"
     "$prefout"
+    clang -fobjc-arc -Wall -Wextra -Werror -I. -framework Foundation tests/test_runtime.m -o "$prefout"
+    "$prefout"
 else
-    echo 'Foundation preference tests require macOS; executed by GitHub CI.'
+    echo 'Foundation preference/runtime tests require macOS; executed by GitHub CI.'
 fi

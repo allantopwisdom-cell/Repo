@@ -36,3 +36,34 @@ except AssertionError:
 else:
     raise AssertionError('truncated signature was not rejected')
 print('Actual built Mach-O: tampered code, bad signature magic and truncation rejected PASS')
+
+signature = binary[start:start + size]
+for i in range(struct.unpack_from('>I', signature, 8)[0]):
+    slot, relative = struct.unpack_from('>II', signature, 12 + i * 8)
+    if slot == 2:
+        corrupt = bytearray(binary)
+        corrupt[start + relative + 8] ^= 1
+        try:
+            verify_signature(corrupt, start, size)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError('modified requirements special slot was not rejected')
+        print('Actual built Mach-O: tampered requirements special-slot payload rejected PASS')
+        break
+else:
+    raise AssertionError('expected requirements slot is absent')
+
+# CodeDirectory metadata must not be able to shrink coverage to zero pages.
+corrupt = bytearray(binary)
+for i in range(struct.unpack_from('>I', signature, 8)[0]):
+    slot, relative = struct.unpack_from('>II', signature, 12 + i * 8)
+    if slot == 0 or 0x1000 <= slot <= 0x1005:
+        struct.pack_into('>II', corrupt, start + relative + 28, 0, 0)
+try:
+    verify_signature(corrupt, start, size)
+except AssertionError:
+    pass
+else:
+    raise AssertionError('zero-page signature coverage was not rejected')
+print('Actual built Mach-O: zero-page signature coverage rejected PASS')

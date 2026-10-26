@@ -1,11 +1,11 @@
-# Powercuff 1.3.2 — RootHide
+# Powercuff 1.3.3 — RootHide 公测版
 
 用于 iOS 16 的系统热模拟档位插件，基于 [Baldaran/Powercuff-r3vamp](https://github.com/Baldaran/Powercuff-r3vamp) 改造。重点验证目标为 iPhone 14 Pro Max / iOS 16.5 / RootHide Dopamine 3.0.4。**尚未经该设备真机验证，不承诺无崩溃、固定 CPU 频率或确定的续航提升。**
 
 ## 行为与边界
 
 - 只注入 SpringBoard 和 thermalmonitord；不注入 App、Widget 或 Settings。
-- 设置使用独立的 `com.minis.powercuff-baldaran-trusted` 偏好域，通过 SpringBoard 的 NSUserDefaults 读取。安装脚本不以 root 身份写入默认值。
+- 设置使用独立的 `com.minis.powercuff-baldaran-trusted` 偏好域，通过 SpringBoard 的 NSUserDefaults 读取指定持久域的一份快照，不使用跨域搜索。安装脚本不以 root 身份写入默认值。
 - 默认关闭；档位为 Off / Nominal / Light / Moderate / Heavy。LPM 开关打开时，仅在系统低电量模式开启期间请求选中档位。
 - 调用系统私有的 `putDeviceInThermalSimulationMode:`。每次 product 初始化创建新的会话标识，仅接受当前会话的档位回复；先检查类、方法及参数 ABI；Objective-C 异常后停止对当前对象重试。此防护不能拦截 SIGBUS、SIGSEGV 或 watchdog。
 - 系统可能因热策略降低性能与帧率；插件没有独立的后台冻结、固定频率或帧率控制功能。
@@ -13,7 +13,7 @@
 
 ## 安装与升级
 
-使用匹配源码提交的 CI DEB。安装或升级后**注销一次（respring）**，让 SpringBoard 与 thermalmonitord 同时加载新协议。旧进程与 1.3.2 的通知协议不兼容；升级前的旧状态不会被当作有效的新档位。
+使用匹配源码提交的 CI DEB。安装或升级后**注销一次（respring）**，让 SpringBoard 与 thermalmonitord 同时加载新协议。1.3.1 / 1.3.2 / 1.3.3 使用同一协议格式，但仍需注销以替换两端实际运行代码；更早版本协议不兼容。旧会话缓存不会被当作新会话回复。
 
 安装脚本仅在 `configure` 阶段尝试一次 launchctl kickstart；失败才回退一次 TERM，不使用双重重启或 SIGKILL。卸载后重启 daemon 清除 hook，随后注销以卸载 SpringBoard 代码。卸载保留用户偏好，重新安装会复用它们。
 
@@ -25,7 +25,7 @@
 sh scripts/check.sh
 export THEOS=/absolute/path/to/roothide-theos
 sh build.sh roothide
-python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.2
+python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.3
 ```
 
 [GitHub Actions](https://github.com/allantopwisdom-cell/Repo/actions) 使用 macOS 14 / Xcode 15.4 / iPhoneOS 16.5 SDK。RootHide Theos 与 SDK 使用固定提交；主项目第三方 Actions 仍使用主要版本标签。打包后统一数值 UID/GID 为 0/0，归档时间来自源码提交；签名 payload 字节不变。PR、主分支及 `audit/**`、`fix/**`、`review/**` 分支执行回归测试、编译与包验证。每份产物附源码提交、工具链引用与 SHA-256。标签不再触发重编译或自动覆盖 Release；发布时使用对应提交的已验证产物及其校验文件。
@@ -45,4 +45,8 @@ python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.2
 | applied = 98 / 99 | Objective-C 异常 / ABI 不符，当前对象停止尝试 |
 | thermals | 带版本头的 64 位状态，不再是裸档位数字 |
 
-详细发现、修复依据与待验证项见 [AUDIT-1.3.2.md](AUDIT-1.3.2.md)。旧 AUDIT-1.3.0.md / ANALYSIS.md / BUILD-REVIEW.md 仅记录历史版本，不作为当前构建或真机验证证明。
+详细发现、修复依据与待验证项见 [AUDIT-1.3.3.md](AUDIT-1.3.3.md)。旧 AUDIT-1.3.2.md / AUDIT-1.3.0.md / ANALYSIS.md / BUILD-REVIEW.md 仅记录历史版本，不作为当前构建或真机验证证明。
+
+## 公测验收
+
+GitHub Release 标记为 Pre-release。自动化验证不替代真机验收：安装/升级/卸载、Off → Light → Off、LPM 门控、SpringBoard/daemon 分别重启后恢复、待机与温控恢复、崩溃及 watchdog 检查均须记录。未连接目标设备，当前不具备正式稳定版的真机放行证据；不得据此认定省电幅度或与 Hello CPU 联用安全。完整公测表见当前审计报告。

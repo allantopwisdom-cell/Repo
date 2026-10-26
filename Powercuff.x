@@ -50,18 +50,6 @@ static BOOL PCRObserve(const char *name, int *token, void (^block)(int)) {
     return NO;
 }
 
-// Refuse missing selectors or incompatible object/void ABIs before installing hooks.
-static BOOL PCRMethodMatches(Class cls, SEL selector, char returnType) {
-    Method method = class_getInstanceMethod(cls, selector);
-    if (!method || method_getNumberOfArguments(method) != 3) return NO;
-    char *ret = method_copyReturnType(method);
-    char *arg = method_copyArgumentType(method, 2);
-    BOOL valid = ret && arg && ret[0] == returnType && arg[0] == '@';
-    free(ret);
-    free(arg);
-    return valid;
-}
-
 static BOOL PCRApplyThermals(void) {
     @autoreleasepool {
         uint64_t state = 0;
@@ -103,9 +91,10 @@ static void PCRApplyAttempt(unsigned attempt, NSUInteger generation) {
 
 static BOOL PCRReadMode(NSInteger *mode) {
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:PCRDomain];
-    id raw = [defaults objectForKey:@"PowerMode"];
+    NSDictionary *snapshot = PCRPreferenceSnapshot(defaults, PCRDomain);
+    id raw = snapshot[@"PowerMode"];
     if (!raw) return NO;
-    *mode = PCRValidatedMode(raw, [defaults objectForKey:@"RequireLowPowerMode"],
+    *mode = PCRValidatedMode(raw, snapshot[@"RequireLowPowerMode"],
                              NSProcessInfo.processInfo.lowPowerModeEnabled);
     return YES;
 }

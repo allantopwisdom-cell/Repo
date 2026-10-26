@@ -1,5 +1,9 @@
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
+// Read one persistent-domain snapshot. objectForKey: also searches unrelated domains.
+static inline NSDictionary *PCRPreferenceSnapshot(NSUserDefaults *defaults, NSString *domain) {
+    return [[defaults persistentDomainForName:domain] copy];
+}
 // Pure preference parsing, shared by the tweak and macOS Foundation regression tests.
 static inline NSInteger PCRValidatedMode(id raw, id gate, BOOL lowPower) {
     if (![raw isKindOfClass:NSNumber.class] ||

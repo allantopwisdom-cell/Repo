@@ -6,7 +6,8 @@ for script in build.sh verify-on-device.sh scripts/check.sh layout/DEBIAN/*; do
 done
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 out=$(mktemp)
-trap 'rm -f "$out"' EXIT
+prefout=$(mktemp)
+trap 'rm -f "$out" "$prefout"' EXIT
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_protocol.c -o "$out"
 "$out"
 python3 - <<'PY'
@@ -17,3 +18,10 @@ for path in Path('.').rglob('*.plist'):
         plistlib.loads(path.read_bytes())
 print('plist syntax PASS')
 PY
+
+if [ "$(uname -s)" = Darwin ]; then
+    clang -fobjc-arc -Wall -Wextra -Werror -I. -framework Foundation -framework CoreFoundation tests/test_preferences.m -o "$prefout"
+    "$prefout"
+else
+    echo 'Foundation preference tests require macOS; executed by GitHub CI.'
+fi

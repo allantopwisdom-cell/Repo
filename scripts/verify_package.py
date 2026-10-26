@@ -7,6 +7,7 @@ from pathlib import Path
 import plistlib
 import struct
 import tarfile
+from macho_signature import verify_signature
 
 
 def ar_members(path):
@@ -67,17 +68,21 @@ def verify(path, expected_version):
     assert magic == 0xFEEDFACF and cpu == 0x0100000C and (subtype & 0xFFFFFF) == 2, 'not thin arm64e'
     assert filetype == 6 and ncmds > 0, 'not a dylib'
     offset, signed, install_id = 32, False, ''
+    signature_range = None
     for _ in range(ncmds):
         cmd, size = struct.unpack_from('<2I', binary, offset)
         assert size >= 8 and offset + size <= 32 + cmdsize <= len(binary)
         if cmd == 0x1D: # LC_CODE_SIGNATURE
             start, length = struct.unpack_from('<2I', binary, offset + 8)
             signed = length > 0 and start + length <= len(binary)
+            signature_range = (start, length)
         if cmd == 0xD: # LC_ID_DYLIB
             start, = struct.unpack_from('<I', binary, offset + 8)
             install_id = binary[offset + start:offset + size].split(b'\0')[0].decode()
         offset += size
-    assert signed, 'code signature blob missing (cryptographic validity requires ldid/device)'
+    assert signed, 'code signature blob missing'
+    assert offset == 32 + cmdsize, 'load command size mismatch'
+    verify_signature(binary, *signature_range)
     assert install_id.startswith('@loader_path/.jbroot/'), f'non-RootHide install id: {install_id}'
     injection = plistlib.loads(files[lib + '.plist'][1])
     assert injection == {'Filter': {'Executables': ['SpringBoard', 'thermalmonitord']}}
@@ -89,7 +94,7 @@ def verify(path, expected_version):
     for pref in preferences.values():
         assert pref['defaults'] == fields['Package']
         assert pref['PostNotification'] == fields['Package'] + '.settingschanged'
-    print(f'PASS {path}: version={fields["Version"]}, thin arm64e, signature blob, RootHide install id, filters, preferences, scripts')
+    print(f'PASS {path}: version={fields["Version"]}, thin arm64e, CodeDirectory page hashes, RootHide install id, filters, preferences, scripts')
     print('SHA256 ' + hashlib.sha256(Path(path).read_bytes()).hexdigest())
 
 

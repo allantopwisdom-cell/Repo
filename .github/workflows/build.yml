@@ -3,8 +3,7 @@ name: Validate and build Powercuff RootHide
 on:
   pull_request:
   push:
-    branches: [main, master, 'audit/**']
-    tags: ['v*']
+    branches: [main, master, 'audit/**', 'fix/**']
   workflow_dispatch:
 
 permissions:
@@ -67,7 +66,8 @@ jobs:
           test "$count" = 1
           PACKAGE=$(find packages -name '*.deb' -type f)
           python3 scripts/verify_package.py "$PACKAGE" --version "$VERSION" | tee packages/verification.txt
-          shasum -a 256 "$PACKAGE" > packages/SHA256SUMS
+          python3 scripts/test_built_package.py "$PACKAGE" | tee -a packages/verification.txt
+          (cd packages && shasum -a 256 "$(basename "$PACKAGE")" > SHA256SUMS)
           git rev-parse HEAD > packages/SOURCE_COMMIT
           printf 'THEOS=%s\nSDK=%s\n' "$THEOS_REF" "$SDK_REF" > packages/TOOLCHAIN_REFS
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
@@ -80,21 +80,3 @@ jobs:
           path: packages/
           if-no-files-found: error
           retention-days: 90
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: Powercuff-RootHide-${{ github.sha }}
-          path: packages
-      - uses: softprops/action-gh-release@v2
-        with:
-          name: Powercuff ${{ github.ref_name }} RootHide
-          draft: true
-          files: packages/*
-          fail_on_unmatched_files: true

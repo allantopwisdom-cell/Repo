@@ -1,3 +1,5 @@
+> 历史记录：仅适用于文中旧版本。当前实现与验证边界以 README.md 和 AUDIT-1.3.0.md 为准。
+
 # PowerCuff Baldaran Trusted RootHide v1.1.0
 
 基于 Baldaran/Powercuff-r3vamp（HEAD eb770af）源码的独立重建，针对

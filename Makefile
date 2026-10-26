@@ -9,10 +9,10 @@ FINALPACKAGE = 1
 TWEAK_NAME = PowercuffBaldaranTrusted
 PowercuffBaldaranTrusted_FILES = Powercuff.x
 PowercuffBaldaranTrusted_FRAMEWORKS = Foundation
-PowercuffBaldaranTrusted_CFLAGS = -fobjc-arc -Wall
+PowercuffBaldaranTrusted_CFLAGS = -fobjc-arc -Wall -Wextra
 
 include $(THEOS)/makefiles/common.mk
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-after-package::
+before-package::
 	chmod 0755 $(THEOS_STAGING_DIR)/DEBIAN/postinst $(THEOS_STAGING_DIR)/DEBIAN/prerm $(THEOS_STAGING_DIR)/DEBIAN/postrm

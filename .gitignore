@@ -1,0 +1,6 @@
+.theos/
+packages/
+theos-roothide/
+__pycache__/
+*.pyc
+.DS_Store

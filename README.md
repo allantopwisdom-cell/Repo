@@ -1,4 +1,4 @@
-# Powercuff 1.3.1 — RootHide
+# Powercuff 1.3.2 — RootHide
 
 用于 iOS 16 的系统热模拟档位插件，基于 [Baldaran/Powercuff-r3vamp](https://github.com/Baldaran/Powercuff-r3vamp) 改造。重点验证目标为 iPhone 14 Pro Max / iOS 16.5 / RootHide Dopamine 3.0.4。**尚未经该设备真机验证，不承诺无崩溃、固定 CPU 频率或确定的续航提升。**
 
@@ -13,7 +13,7 @@
 
 ## 安装与升级
 
-使用匹配源码提交的 CI DEB。安装或升级后**注销一次（respring）**，让 SpringBoard 与 thermalmonitord 同时加载新协议。旧进程与 1.3.1 的通知协议不兼容；升级前的旧状态不会被当作有效的新档位。
+使用匹配源码提交的 CI DEB。安装或升级后**注销一次（respring）**，让 SpringBoard 与 thermalmonitord 同时加载新协议。旧进程与 1.3.2 的通知协议不兼容；升级前的旧状态不会被当作有效的新档位。
 
 安装脚本仅在 `configure` 阶段尝试一次 launchctl kickstart；失败才回退一次 TERM，不使用双重重启或 SIGKILL。卸载后重启 daemon 清除 hook，随后注销以卸载 SpringBoard 代码。卸载保留用户偏好，重新安装会复用它们。
 
@@ -25,12 +25,12 @@
 sh scripts/check.sh
 export THEOS=/absolute/path/to/roothide-theos
 sh build.sh roothide
-python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.1
+python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.2
 ```
 
-[GitHub Actions](https://github.com/allantopwisdom-cell/Repo/actions) 使用 macOS 14 / Xcode 15.4 / iPhoneOS 16.5 SDK。RootHide Theos 与 SDK 使用固定提交；主项目第三方 Actions 仍使用主要版本标签。PR、主分支及 `audit/**` 分支执行回归测试、编译与包验证。每份产物附源码提交、工具链引用与 SHA-256。标签不再触发重编译或自动覆盖 Release；发布时使用对应提交的已验证产物及其校验文件。
+[GitHub Actions](https://github.com/allantopwisdom-cell/Repo/actions) 使用 macOS 14 / Xcode 15.4 / iPhoneOS 16.5 SDK。RootHide Theos 与 SDK 使用固定提交；主项目第三方 Actions 仍使用主要版本标签。打包后统一数值 UID/GID 为 0/0，归档时间来自源码提交；签名 payload 字节不变。PR、主分支及 `audit/**`、`fix/**`、`review/**` 分支执行回归测试、编译与包验证。每份产物附源码提交、工具链引用与 SHA-256。标签不再触发重编译或自动覆盖 Release；发布时使用对应提交的已验证产物及其校验文件。
 
-包验证检查：精确版本、arm64e Mach-O、CodeDirectory 代码页哈希、RootHide install ID、限定注入范围、偏好键一致性、控制脚本执行位。代码页哈希通过不证明证书信任、特殊签名槽、PAC 运行行为或设备加载成功。
+包验证检查：精确版本、arm64e Mach-O、CodeDirectory 代码页及特殊槽哈希、数值属主 0/0、iOS 部署目标、文件清单、RootHide install ID、限定注入范围、偏好键一致性、控制脚本执行位。代码页及特殊槽完整性通过不证明证书信任、PAC 运行行为或设备加载成功。
 
 ## 设备诊断
 
@@ -45,4 +45,4 @@ python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.1
 | applied = 98 / 99 | Objective-C 异常 / ABI 不符，当前对象停止尝试 |
 | thermals | 带版本头的 64 位状态，不再是裸档位数字 |
 
-详细发现、修复依据与待验证项见 [AUDIT-1.3.1.md](AUDIT-1.3.1.md)。旧 AUDIT-1.3.0.md / ANALYSIS.md / BUILD-REVIEW.md 仅记录历史版本，不作为当前构建或真机验证证明。
+详细发现、修复依据与待验证项见 [AUDIT-1.3.2.md](AUDIT-1.3.2.md)。旧 AUDIT-1.3.0.md / ANALYSIS.md / BUILD-REVIEW.md 仅记录历史版本，不作为当前构建或真机验证证明。

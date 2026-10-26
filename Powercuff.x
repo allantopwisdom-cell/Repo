@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include "PCRProtocol.h"
 #import "PCRPreferences.h"
+#import "PCRRuntime.h"
 
 static NSString *const PCRDomain = @"com.minis.powercuff-baldaran-trusted";
 static const char *const PCRSettingsChanged = "com.minis.powercuff-baldaran-trusted.settingschanged";
@@ -22,7 +23,7 @@ static uint32_t PCRSession, PCRLastPublishedSession;
 static NSUInteger PCRRequestGeneration;
 static int PCRLoadedToken = -1, PCRHookToken = -1, PCRAppliedToken = -1;
 static int PCRLastApplied = -1, PCRLastPublished = -1;
-static NSUInteger PCRGeneration;
+static NSUInteger PCRGeneration, PCRApplyGeneration, PCRRefreshGeneration;
 static id PCRLPMObserver;
 
 static BOOL PCRRegister(const char *name, int *token) {
@@ -61,19 +62,19 @@ static BOOL PCRMethodMatches(Class cls, SEL selector, char returnType) {
     return valid;
 }
 
-static void PCRApplyThermals(void) {
+static BOOL PCRApplyThermals(void) {
     @autoreleasepool {
         uint64_t state = 0;
         unsigned mode = 0;
         if (PCRStateToken < 0 || notify_get_state(PCRStateToken, &state) != NOTIFY_STATUS_OK ||
-            !PCRDecodeMode(state, PCRSession, &mode)) return;
+            !PCRDecodeMode(state, PCRSession, &mode)) return NO;
         id product = PCRProduct;
-        if (!product || PCRApplyFailed || PCRLastApplied == (int)mode) return;
+        if (!product || PCRApplyFailed || PCRLastApplied == (int)mode) return YES;
         SEL selector = @selector(putDeviceInThermalSimulationMode:);
         if (!PCRMethodMatches(object_getClass(product), selector, 'v')) {
             PCRApplyFailed = YES;
             PCRDiagnostic(PCRAppliedToken, 99);
-            return;
+            return YES;
         }
         NSString *names[] = {@"off", @"nominal", @"light", @"moderate", @"heavy"};
         @try {
@@ -87,6 +88,16 @@ static void PCRApplyThermals(void) {
             PCRDiagnostic(PCRAppliedToken, 98);
             os_log_error(PCRLog, "thermal API exception: %{public}@", exception.name);
         }
+        return YES; // API faults are terminal for this object; do not retry private calls.
+    }
+}
+
+static void PCRApplyAttempt(unsigned attempt, NSUInteger generation) {
+    if (generation != PCRApplyGeneration) return;
+    if (!PCRApplyThermals() && attempt < 5) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 400 * NSEC_PER_MSEC), PCRQueue, ^{
+            PCRApplyAttempt(attempt + 1, generation);
+        });
     }
 }
 
@@ -137,6 +148,18 @@ static void PCRPublish(BOOL force) {
     PCRPublishAttempt(force, 0, ++PCRGeneration);
 }
 
+// Settings notification delivery and cfprefsd visibility need not coincide.
+// Reread the current domain twice; never capture a stale mode in a delayed block.
+static void PCRRefreshPreferences(void) {
+    NSUInteger generation = ++PCRRefreshGeneration;
+    PCRPublish(NO);
+    for (NSNumber *delay in @[@0.15, @0.6]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), PCRQueue, ^{
+            if (generation == PCRRefreshGeneration) PCRPublish(NO);
+        });
+    }
+}
+
 static void PCRRequestFresh(unsigned attempt, NSUInteger generation) {
     if (generation != PCRRequestGeneration || !PCRProduct || PCRLastApplied >= 0 || PCRApplyFailed) return;
     if (notify_set_state(PCRRequestStateToken, PCREncodeRequest(PCRSession)) != NOTIFY_STATUS_OK ||
@@ -156,6 +179,7 @@ static void PCRCaptureProduct(id product) {
         id current = candidate;
         if (!current || current == PCRProduct) return;
         PCRProduct = current; // All cache accesses confined to the daemon main queue.
+        ++PCRApplyGeneration; // Invalidate reads queued for a previous product/session.
         PCRLastApplied = -1;
         PCRApplyFailed = NO;
         PCRDiagnostic(PCRHookToken, 1);
@@ -209,14 +233,14 @@ static void PCRCaptureProduct(id product) {
             PCRDiagnostic(PCRHookToken, 0);
             PCRDiagnostic(PCRAppliedToken, 10);
             if (!PCRObserve(PCRThermalsChanged, &PCRSettingsToken, ^(int token) {
-                (void)token; PCRApplyThermals();
+                (void)token; PCRApplyAttempt(0, ++PCRApplyGeneration);
             })) return;
             Class common = objc_getClass("CommonProduct"), gp = objc_getClass("GPProduct");
             SEL init = @selector(initProduct:), apply = @selector(putDeviceInThermalSimulationMode:);
             BOOL commonOK = PCRMethodMatches(common, init, '@') && PCRMethodMatches(common, apply, 'v');
             // Compare BEFORE hooking: an inherited method needs only the base-class hook.
             BOOL gpOK = PCRMethodMatches(gp, init, '@') && PCRMethodMatches(gp, apply, 'v') &&
-                (!commonOK || class_getMethodImplementation(gp, init) != class_getMethodImplementation(common, init));
+                (!commonOK || PCRNeedsSeparateHook(gp, common, init));
             if (!commonOK && !gpOK) {
                 PCRDiagnostic(PCRAppliedToken, 99);
                 os_log_error(PCRLog, "no supported thermal initializer/API ABI; hooks disabled");
@@ -226,14 +250,14 @@ static void PCRCaptureProduct(id product) {
             if (gpOK) { %init(PCRGPHooks); }
         } else {
             if (!PCRObserve(PCRSettingsChanged, &PCRSettingsToken, ^(int token) {
-                (void)token; PCRPublish(NO);
+                (void)token; PCRRefreshPreferences();
             }) || !PCRObserve(PCRRequest, &PCRRequestToken, ^(int token) {
                 (void)token; PCRPublish(YES);
             })) return;
             PCRLPMObserver = [NSNotificationCenter.defaultCenter
                 addObserverForName:NSProcessInfoPowerStateDidChangeNotification object:nil queue:nil
                 usingBlock:^(NSNotification *note) {
-                    (void)note; dispatch_async(PCRQueue, ^{ PCRPublish(NO); });
+                    (void)note; dispatch_async(PCRQueue, ^{ PCRRefreshPreferences(); });
                 }];
             dispatch_async(PCRQueue, ^{ PCRPublish(YES); });
             for (NSNumber *delay in @[@3, @10, @30, @60]) {

@@ -139,6 +139,12 @@ static void PCRPublishAttempt(BOOL force, unsigned attempt, NSUInteger generatio
         if (!haveSession) return; // Never publish a value without a daemon session.
         // A missing key remains the first-install default, after bounded retries.
         if (!force && PCRLastPublished == mode && PCRLastPublishedSession == session) return;
+        // set_state can succeed even when post fails. Until BOTH succeed, the
+        // shared word may differ from the last delivered value. Invalidate first
+        // so a newer generation returning to that value repairs it instead of
+        // skipping publication and leaving a stale (possibly non-Off) word.
+        PCRLastPublished = -1;
+        PCRLastPublishedSession = 0;
         if (notify_set_state(PCRStateToken, PCREncodeMode(session, (unsigned)mode)) != NOTIFY_STATUS_OK ||
             notify_post(PCRThermalsChanged) != NOTIFY_STATUS_OK) {
             os_log_error(PCRLog, "mode publication failed");

@@ -176,6 +176,22 @@ int main(void) {
         assert(product.calls == 1);
         puts("Core: handshake, session response and same-mode private-call dedup PASS");
 
+        // A successful state write followed by a failed post is not a publication.
+        // Returning to the previously delivered value must repair the shared state.
+        Reset(); product = [TestProduct new]; Preferences = @{@"PowerMode": @0};
+        PCRCaptureProduct(product); Drain();
+        assert(product.calls == 1 && Status() == 0);
+        PostFailures = 1; Preferences = @{@"PowerMode": @4}; PCRPublish(NO);
+        Preferences = @{@"PowerMode": @0}; PCRPublish(NO); Drain();
+        unsigned repairedMode = 99;
+        assert(PCRDecodeMode([States[@(PCRStateToken)] unsignedLongLongValue], PCRSession, &repairedMode));
+        assert(repairedMode == 0 && PCRLastPublished == 0);
+        PCRApplyAttempt(0, ++PCRApplyGeneration); Drain();
+        assert(product.calls == 1 && Status() == 0 && [product.mode isEqual:@"off"]);
+        puts("Core: failed mode post then return to Off repairs state and cancels stale retry PASS");
+
+        Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
+
         // Invalid state after an initial success used to leave the old mode silently.
         States[@(PCRStateToken)] = @(PCREncodeMode(PCRSession + 1, 4));
         unsigned before = RequestPosts;

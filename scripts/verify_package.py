@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Inspect Debian/Mach-O bytes without extracting as root. Fails closed for this project."""
 import argparse
+import gzip
 import hashlib
 import io
+import lzma
 from pathlib import Path
 import plistlib
 import struct
@@ -52,6 +54,23 @@ def tar_members(data):
         return result
 
 
+def package_archives(members):
+    names = list(members)
+    assert len(names) == 3 and names[0] == 'debian-binary', 'incorrect Debian member order/count'
+    result = []
+    for name, prefix in zip(names[1:], ('control.tar.', 'data.tar.')):
+        assert name.startswith(prefix), 'incorrect Debian member order'
+        suffix = name[len(prefix):]
+        assert suffix in ('gz', 'xz', 'lzma'), 'unsupported Debian compression suffix'
+        try:
+            raw = (gzip.decompress(members[name]) if suffix == 'gz' else
+                   lzma.decompress(members[name], format=lzma.FORMAT_XZ if suffix == 'xz' else lzma.FORMAT_ALONE))
+        except (OSError, EOFError, lzma.LZMAError) as error:
+            raise AssertionError('Debian compression does not match member name') from error
+        result.append(tar_members(raw))
+    return tuple(result)
+
+
 def control_fields(contents):
     fields, current = {}, None
     for line in contents.decode().splitlines():
@@ -90,10 +109,7 @@ def verify_source_contents(controls, files, source_root):
 
 def verify(path, expected_version, source_root=None):
     members = ar_members(path)
-    control_name, = [key for key in members if key.startswith('control.tar.')]
-    data_name, = [key for key in members if key.startswith('data.tar.')]
-    assert set(members) == {'debian-binary', control_name, data_name}, 'unexpected ar member'
-    controls, files = tar_members(members[control_name]), tar_members(members[data_name])
+    controls, files = package_archives(members)
     assert set(controls) == {'control', 'postinst', 'prerm', 'postrm'}, 'unexpected or missing control file'
     fields = control_fields(controls['control'][1])
     assert fields['Package'] == 'com.minis.powercuff-baldaran-trusted'

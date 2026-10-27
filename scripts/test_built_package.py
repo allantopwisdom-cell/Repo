@@ -58,7 +58,7 @@ else:
 corrupt = bytearray(binary)
 for i in range(struct.unpack_from('>I', signature, 8)[0]):
     slot, relative = struct.unpack_from('>II', signature, 12 + i * 8)
-    if slot == 0 or 0x1000 <= slot <= 0x1005:
+    if slot == 0 or 0x1000 <= slot < 0x1005:
         struct.pack_into('>II', corrupt, start + relative + 28, 0, 0)
 try:
     verify_signature(corrupt, start, size)
@@ -68,10 +68,31 @@ else:
     raise AssertionError('zero-page signature coverage was not rejected')
 print('Actual built Mach-O: zero-page signature coverage rejected PASS')
 
+# Changing CodeDirectory metadata must not bypass coverage or change interpretation.
+for label, relative, width, value in (
+        ('missing-special-coverage', 24, 'I', 0),
+        ('scatter-layout', 44, 'I', 1),
+        ('extended-limit', 56, 'Q', start + 1),
+        ('unknown-version', 8, 'I', 0xFFFFFF)):
+    corrupt = bytearray(binary)
+    for i in range(struct.unpack_from('>I', signature, 8)[0]):
+        slot, directory = struct.unpack_from('>II', signature, 12 + i * 8)
+        if slot == 0 or 0x1000 <= slot < 0x1005:
+            struct.pack_into('>' + width, corrupt, start + directory + relative, value)
+    try:
+        verify_signature(corrupt, start, size)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f'signature metadata mutation {label} was accepted')
+    print(f'Actual built Mach-O: {label} rejected PASS')
+
 # Verify the complete DEB against this checkout, then mutate independently of Mach-O.
 import contextlib
 import copy
 import io
+import gzip
+import lzma
 from pathlib import Path
 import tarfile
 import tempfile
@@ -84,10 +105,10 @@ version = control_fields(tar_members(members[control_name])['control'][1])['Vers
 with contextlib.redirect_stdout(io.StringIO()):
     verify(sys.argv[1], version, source_root)
 
-def mutate_tar(blob, scenario):
+def mutate_tar(blob, scenario, archive_name):
     out = io.BytesIO()
     changed = False
-    with tarfile.open(fileobj=io.BytesIO(blob)) as archive, tarfile.open(fileobj=out, mode='w:gz') as target:
+    with tarfile.open(fileobj=io.BytesIO(blob)) as archive, tarfile.open(fileobj=out, mode='w') as target:
         for original in archive:
             item = copy.copy(original)
             payload = archive.extractfile(original).read() if original.isfile() else None
@@ -102,13 +123,23 @@ def mutate_tar(blob, scenario):
             if payload is not None: item.size = len(payload)
             target.addfile(item, io.BytesIO(payload) if payload is not None else None)
     assert changed
-    return out.getvalue()
+    raw = out.getvalue()
+    if archive_name.endswith('.gz'): return gzip.compress(raw, mtime=0)
+    return lzma.compress(raw, format=lzma.FORMAT_XZ if archive_name.endswith('.xz') else lzma.FORMAT_ALONE)
 
 with tempfile.TemporaryDirectory() as directory:
-    for scenario in ('unreviewed-script', 'changed-icon', 'unreadable-dylib', 'unreviewed-dependency'):
+    for scenario in ('unreviewed-script', 'changed-icon', 'unreadable-dylib', 'unreviewed-dependency',
+                     'reordered-members', 'compression-name-mismatch'):
         damaged = dict(members)
-        name = control_name if scenario in ('unreviewed-script', 'unreviewed-dependency') else data_name
-        damaged[name] = mutate_tar(damaged[name], scenario)
+        if scenario == 'reordered-members':
+            damaged = dict(reversed(list(damaged.items())))
+        elif scenario == 'compression-name-mismatch':
+            # Change only the label; preserve original compressed bytes.
+            wrong_name = 'control.tar.xz' if control_name.endswith('.gz') else 'control.tar.gz'
+            damaged = {(wrong_name if name == control_name else name): blob for name, blob in damaged.items()}
+        else:
+            name = control_name if scenario in ('unreviewed-script', 'unreviewed-dependency') else data_name
+            damaged[name] = mutate_tar(damaged[name], scenario, name)
         data = bytearray(b'!<arch>\n')
         for name, payload in damaged.items():
             data.extend(f'{name + "/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{len(payload):<10}`\n'.encode())
@@ -118,8 +149,13 @@ with tempfile.TemporaryDirectory() as directory:
         path.write_bytes(data)
         try:
             with contextlib.redirect_stdout(io.StringIO()): verify(path, version, source_root)
-        except AssertionError:
-            pass
+        except AssertionError as error:
+            expected_reason = {'unreviewed-script': 'postinst differs', 'changed-icon': 'differs from source',
+                               'unreadable-dylib': 'incorrect payload permissions',
+                               'unreviewed-dependency': 'control metadata differs',
+                               'reordered-members': 'member order',
+                               'compression-name-mismatch': 'compression does not match'}[scenario]
+            assert expected_reason in str(error), f'{scenario} failed for an unrelated reason: {error}'
         else:
             raise AssertionError(f'actual DEB mutation {scenario} was accepted')
         print(f'Actual built DEB: {scenario} rejected PASS')

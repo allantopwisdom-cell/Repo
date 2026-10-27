@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: powercuff-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,17 +29,17 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Source regression checks
-        run: sh scripts/check.sh
       - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: '15.4'
+      - name: Source regression checks
+        run: sh scripts/check.sh 2>&1 | tee SOURCE_TESTS.txt
       - name: Checkout pinned RootHide Theos
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: roothide/theos
           ref: ${{ env.THEOS_REF }}
@@ -65,17 +69,17 @@ jobs:
           count=$(find packages -name '*.deb' -type f | wc -l | tr -d ' ')
           test "$count" = 1
           PACKAGE=$(find packages -name '*.deb' -type f)
-          python3 scripts/normalize_package.py "$PACKAGE" --epoch "$(git log -1 --format=%ct)"
-          python3 scripts/verify_package.py "$PACKAGE" --version "$VERSION" | tee packages/verification.txt
-          python3 scripts/test_built_package.py "$PACKAGE" | tee -a packages/verification.txt
+          cp SOURCE_TESTS.txt packages/SOURCE_TESTS.txt
           (cd packages && shasum -a 256 "$(basename "$PACKAGE")" > SHA256SUMS)
           git rev-parse HEAD > packages/SOURCE_COMMIT
+          git ls-files -z | xargs -0 shasum -a 256 > packages/SOURCE_FILES.sha256
           printf 'THEOS=%s\nSDK=%s\n' "$THEOS_REF" "$SDK_REF" > packages/TOOLCHAIN_REFS
+          { xcodebuild -version; clang --version; python3 --version; ldid -v 2>&1 || true; dpkg-deb --version; brew list --versions ldid dpkg xz; } > packages/BUILD_ENVIRONMENT.txt
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             test "${GITHUB_REF#refs/tags/}" = "v$VERSION"
           fi
       - name: Upload verified package and provenance
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Powercuff-RootHide-${{ github.sha }}
           path: packages/

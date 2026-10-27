@@ -52,21 +52,50 @@ def tar_members(data):
         return result
 
 
-def verify(path, expected_version):
+def control_fields(contents):
+    fields, current = {}, None
+    for line in contents.decode().splitlines():
+        if not line:
+            continue
+        if line[0].isspace():
+            assert current, 'control continuation without a field'
+            fields[current] += '\n' + line[1:]
+            continue
+        key, value = line.split(':', 1)
+        assert key not in fields, f'duplicate control field: {key}'
+        fields[key] = value.strip()
+        current = key
+    return fields
+
+
+def verify_source_contents(controls, files, source_root):
+    root = Path(source_root)
+    generated = control_fields(controls['control'][1])
+    installed_size = generated.pop('Installed-Size', None) # Added by Theos, not source control.
+    if installed_size is not None:
+        assert installed_size.isascii() and installed_size.isdecimal() and int(installed_size) > 0, 'invalid Installed-Size'
+    assert generated == control_fields((root / 'control').read_bytes()), 'control metadata differs from source'
+    for name in ('postinst', 'prerm', 'postrm'):
+        assert controls[name][1] == (root / 'layout/DEBIAN' / name).read_bytes(), f'{name} differs from reviewed source'
+    for name, (_, contents) in files.items():
+        if name.endswith('.dylib'):
+            continue
+        source = root / ('PowercuffBaldaranTrusted.plist' if name.endswith('/PowercuffBaldaranTrusted.plist') else 'layout/' + name)
+        expected = source.read_bytes()
+        if name.endswith('.plist'):
+            assert plistlib.loads(contents) == plistlib.loads(expected), f'{name} plist differs from source'
+        else:
+            assert contents == expected, f'{name} differs from source'
+
+
+def verify(path, expected_version, source_root=None):
     members = ar_members(path)
     control_name, = [key for key in members if key.startswith('control.tar.')]
     data_name, = [key for key in members if key.startswith('data.tar.')]
     assert set(members) == {'debian-binary', control_name, data_name}, 'unexpected ar member'
     controls, files = tar_members(members[control_name]), tar_members(members[data_name])
-    assert set(controls) <= {'control', 'postinst', 'prerm', 'postrm', 'md5sums'}, 'unexpected control script'
-    control = controls['control'][1].decode()
-    fields = {}
-    for line in control.splitlines():
-        if not line or line[0].isspace():
-            continue
-        key, value = line.split(':', 1)
-        assert key not in fields, f'duplicate control field: {key}'
-        fields[key] = value.strip()
+    assert set(controls) == {'control', 'postinst', 'prerm', 'postrm'}, 'unexpected or missing control file'
+    fields = control_fields(controls['control'][1])
     assert fields['Package'] == 'com.minis.powercuff-baldaran-trusted'
     assert fields['Architecture'] == 'iphoneos-arm64e'
     assert fields['Version'] == expected_version, fields['Version']
@@ -80,6 +109,13 @@ def verify(path, expected_version):
     expected_files = {lib + '.dylib', lib + '.plist'} | {panel_path + name for name in
                      ('Powercuff.plist', 'icon.png', 'Powercuff@2x.png', 'Powercuff@3x.png')}
     assert set(files) == expected_files, 'unexpected or missing package payload'
+    for name, (item, _) in files.items():
+        assert item.mode == (0o755 if name.endswith('.dylib') else 0o644), f'incorrect payload permissions: {name}'
+    assert controls['control'][0].mode == 0o644, 'control metadata permissions'
+    for name in ('postinst', 'prerm', 'postrm'):
+        assert controls[name][0].mode == 0o755, f'{name} permissions'
+    if source_root is not None:
+        verify_source_contents(controls, files, source_root)
     item, binary = files[lib + '.dylib']
     magic, cpu, subtype, filetype, ncmds, cmdsize, flags, reserved = struct.unpack_from('<8I', binary)
     assert magic == 0xFEEDFACF and cpu == 0x0100000C and (subtype & 0xFFFFFF) == 2, 'not thin arm64e'
@@ -112,7 +148,11 @@ def verify(path, expected_version):
             install_id = binary[offset + start:offset + size].split(b'\0')[0].decode()
         offset += size
     assert deployment == (2, 0x100000), 'expected iOS device platform and iOS 16.0 deployment target'
-    assert imports and all(name.startswith(('/System/Library/', '/usr/lib/', '@loader_path/.jbroot/')) for name in imports), 'unexpected dylib dependency path'
+    expected_imports = {'/usr/lib/libobjc.A.dylib', '/usr/lib/libSystem.B.dylib',
+                        '/System/Library/Frameworks/Foundation.framework/Foundation',
+                        '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation',
+                        '@loader_path/.jbroot/usr/lib/libsubstrate.dylib'}
+    assert set(imports) == expected_imports and len(imports) == len(expected_imports), 'unexpected dylib dependencies'
     assert signed, 'code signature blob missing'
     assert offset == 32 + cmdsize, 'load command size mismatch'
     verify_signature(binary, *signature_range)
@@ -135,5 +175,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('package')
     parser.add_argument('--version', required=True)
+    parser.add_argument('--source-root', help='Compare control metadata, scripts and static assets to this source checkout')
     args = parser.parse_args()
-    verify(args.package, args.version)
+    verify(args.package, args.version, args.source_root)

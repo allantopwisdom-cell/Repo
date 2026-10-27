@@ -67,3 +67,59 @@ except AssertionError:
 else:
     raise AssertionError('zero-page signature coverage was not rejected')
 print('Actual built Mach-O: zero-page signature coverage rejected PASS')
+
+# Verify the complete DEB against this checkout, then mutate independently of Mach-O.
+import contextlib
+import copy
+import io
+from pathlib import Path
+import tarfile
+import tempfile
+from verify_package import control_fields, verify
+
+source_root = Path(__file__).resolve().parents[1]
+control_name, = [n for n in members if n.startswith('control.tar.')]
+data_name, = [n for n in members if n.startswith('data.tar.')]
+version = control_fields(tar_members(members[control_name])['control'][1])['Version']
+with contextlib.redirect_stdout(io.StringIO()):
+    verify(sys.argv[1], version, source_root)
+
+def mutate_tar(blob, scenario):
+    out = io.BytesIO()
+    changed = False
+    with tarfile.open(fileobj=io.BytesIO(blob)) as archive, tarfile.open(fileobj=out, mode='w:gz') as target:
+        for original in archive:
+            item = copy.copy(original)
+            payload = archive.extractfile(original).read() if original.isfile() else None
+            if scenario == 'unreviewed-script' and item.name.removeprefix('./') == 'postinst':
+                payload += b'\necho unreviewed\n'; changed = True
+            elif scenario == 'changed-icon' and item.name.endswith('/icon.png'):
+                payload = payload[:-1] + bytes([payload[-1] ^ 1]); changed = True
+            elif scenario == 'unreadable-dylib' and item.name.endswith('.dylib'):
+                item.mode = 0; changed = True
+            elif scenario == 'unreviewed-dependency' and item.name.removeprefix('./') == 'control':
+                payload = payload.replace(b'preferenceloader', b'unreviewed-dependency'); changed = True
+            if payload is not None: item.size = len(payload)
+            target.addfile(item, io.BytesIO(payload) if payload is not None else None)
+    assert changed
+    return out.getvalue()
+
+with tempfile.TemporaryDirectory() as directory:
+    for scenario in ('unreviewed-script', 'changed-icon', 'unreadable-dylib', 'unreviewed-dependency'):
+        damaged = dict(members)
+        name = control_name if scenario in ('unreviewed-script', 'unreviewed-dependency') else data_name
+        damaged[name] = mutate_tar(damaged[name], scenario)
+        data = bytearray(b'!<arch>\n')
+        for name, payload in damaged.items():
+            data.extend(f'{name + "/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{len(payload):<10}`\n'.encode())
+            data.extend(payload)
+            if len(payload) & 1: data.extend(b'\n')
+        path = Path(directory) / 'negative.deb'
+        path.write_bytes(data)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()): verify(path, version, source_root)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f'actual DEB mutation {scenario} was accepted')
+        print(f'Actual built DEB: {scenario} rejected PASS')

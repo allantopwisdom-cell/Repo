@@ -34,7 +34,7 @@ static uint32_t NextSession = 100;
 - (BOOL)lowPowerModeEnabled { return LowPower; }
 @end
 
-static void Enqueue(uint64_t deadline, dispatch_block_t block) {
+static void PCRTestEnqueue(uint64_t deadline, dispatch_block_t block) {
     [Tasks addObject:@{@"time": @(deadline), @"block": [block copy]}];
 }
 static dispatch_time_t TestTime(dispatch_time_t when, int64_t delta) {
@@ -42,10 +42,10 @@ static dispatch_time_t TestTime(dispatch_time_t when, int64_t delta) {
     return Clock + (uint64_t)delta;
 }
 static void TestAfter(dispatch_time_t when, dispatch_queue_t queue, dispatch_block_t block) {
-    (void)queue; Enqueue(when, block);
+    (void)queue; PCRTestEnqueue(when, block);
 }
 static void TestAsync(dispatch_queue_t queue, dispatch_block_t block) {
-    (void)queue; Enqueue(Clock, block);
+    (void)queue; PCRTestEnqueue(Clock, block);
 }
 static void PCRPublish(BOOL force);
 static void PCRApplyAttempt(unsigned attempt, NSUInteger generation);
@@ -106,10 +106,10 @@ static uint32_t TestPost(const char *name) {
     if (PostFailures) { --PostFailures; return 1; }
     if (strcmp(name, PCRRequest) == 0) {
         ++RequestPosts;
-        if (Respond) Enqueue(Clock, ^{ PCRPublish(YES); });
+        if (Respond) PCRTestEnqueue(Clock, ^{ PCRPublish(YES); });
     } else if (strcmp(name, PCRThermalsChanged) == 0) {
         ++ModePosts;
-        if (Deliver) Enqueue(Clock, ^{ PCRApplyAttempt(0, ++PCRApplyGeneration); });
+        if (Deliver) PCRTestEnqueue(Clock, ^{ PCRApplyAttempt(0, ++PCRApplyGeneration); });
     }
     return NOTIFY_STATUS_OK;
 }

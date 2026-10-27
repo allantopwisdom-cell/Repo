@@ -5,7 +5,7 @@ import sys
 import tarfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from verify_package import tar_members
+from verify_package import package_archives, tar_members
 
 class PayloadValidation(unittest.TestCase):
     def archive(self, *items):
@@ -20,6 +20,29 @@ class PayloadValidation(unittest.TestCase):
 
     def test_regular_file(self):
         self.assertIn('valid', tar_members(self.archive(('valid', tarfile.REGTYPE, 0o644))))
+
+    def test_debian_member_order(self):
+        import itertools
+        members = {'debian-binary': b'2.0\n', 'control.tar.gz': self.archive(), 'data.tar.gz': self.archive()}
+        package_archives(members)
+        for order in itertools.permutations(members):
+            if list(order) != list(members):
+                with self.assertRaisesRegex(AssertionError, 'order'):
+                    package_archives({name: members[name] for name in order})
+
+    def test_compression_suffix_matches_bytes(self):
+        import gzip
+        import lzma
+        raw = gzip.decompress(self.archive())
+        for suffix, blob in [('gz', gzip.compress(raw)), ('xz', lzma.compress(raw)),
+                             ('lzma', lzma.compress(raw, format=lzma.FORMAT_ALONE))]:
+            members = {'debian-binary': b'2.0\n', 'control.tar.gz': self.archive(), 'data.tar.' + suffix: blob}
+            package_archives(members)
+        members['data.tar.lzma'] = gzip.compress(raw)
+        with self.assertRaisesRegex(AssertionError, 'compression'):
+            package_archives(members)
+        with self.assertRaisesRegex(AssertionError, 'suffix'):
+            package_archives({'debian-binary': b'2.0\n', 'control.tar.bogus': self.archive(), 'data.tar.gz': self.archive()})
 
     def test_directories_must_be_traversable(self):
         tar_members(self.archive(('.', tarfile.DIRTYPE, 0o755), ('Library', tarfile.DIRTYPE, 0o755)))

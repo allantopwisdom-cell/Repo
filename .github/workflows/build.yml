@@ -70,6 +70,7 @@ jobs:
           test "$count" = 1
           PACKAGE=$(find packages -name '*.deb' -type f)
           cp SOURCE_TESTS.txt packages/SOURCE_TESTS.txt
+          cp "AUDIT-$VERSION.md" packages/
           (cd packages && shasum -a 256 "$(basename "$PACKAGE")" > SHA256SUMS)
           git rev-parse HEAD > packages/SOURCE_COMMIT
           git ls-files -z | xargs -0 shasum -a 256 > packages/SOURCE_FILES.sha256

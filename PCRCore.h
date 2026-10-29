@@ -191,9 +191,9 @@ static void PCRRequestFresh(unsigned attempt, NSUInteger generation) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 400 * NSEC_PER_MSEC), PCRQueue, ^{
             if (generation == PCRRequestGeneration && PCRProduct && PCRAwaitingReply && !PCRApplyFailed) {
                 PCRDiagnostic(PCRAppliedToken, 11);
-                // The episode is over. A later independent state notification may
-                // start another bounded recovery; do not schedule one here.
-                PCRRecoveryRequested = NO;
+                // Keep recovery latched until a VALID reply or new product arrives.
+                // Replies from our own recovery requests can enqueue delayed reads;
+                // clearing here lets those reads restart recovery without a bound.
                 os_log_error(PCRLog, "session response timed out; no further periodic requests");
             }
         });

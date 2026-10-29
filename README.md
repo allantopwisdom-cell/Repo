@@ -2,7 +2,7 @@
 
 用于 iOS 16 的系统热模拟档位插件，基于 [Baldaran/Powercuff-r3vamp](https://github.com/Baldaran/Powercuff-r3vamp) 改造。重点验证目标为 iPhone 14 Pro Max / iOS 16.5 / RootHide Dopamine 3.0.4。**尚未经该设备真机验证，不承诺无崩溃、固定 CPU 频率或确定的续航提升。**
 
-公开 Release 使用对应提交的 macOS Actions 产物，并要求通过 arm64e PAC00 ABI 检查及源码/实际包回归。此前单独交付的 Linux 本地构建见 [LOCAL-BUILD-1.3.6.md](LOCAL-BUILD-1.3.6.md)；两种构建环境的二进制与 SHA-256 可能不同，公开发行以 Release 附件及其 SHA256SUMS 为准。
+公开 Release 使用对应提交的 macOS Actions 产物，并要求通过 arm64e PAC00 ABI 检查及源码/实际包回归。此前本地 1.3.6 包已因 macOS 回归发现通知循环而撤回，记录见 [LOCAL-BUILD-1.3.6.md](LOCAL-BUILD-1.3.6.md)。请以最终 1.3.6 Release 附件及其 SHA256SUMS 为准；版本号相同时也需重新安装该云端包，再注销一次，才能替换旧二进制。
 
 ## 行为与边界
 
@@ -10,7 +10,7 @@
 - 设置使用独立的 `com.minis.powercuff-baldaran-trusted` 偏好域，通过 SpringBoard 的 NSUserDefaults 读取指定持久域的一份快照，不使用跨域搜索。安装脚本不以 root 身份写入默认值。
 - 默认关闭；档位为 Off / Nominal / Light / Moderate / Heavy。LPM 开关打开时，仅在系统低电量模式开启期间请求选中档位。
 - 调用系统私有的 `putDeviceInThermalSimulationMode:`。每次 product 初始化创建新的会话标识，仅接受当前会话的档位回复；先检查类、方法及参数 ABI；Objective-C 异常后停止对当前对象重试。此防护不能拦截 SIGBUS、SIGSEGV 或 watchdog。
-- 通知读取重试耗尽后，最多追加一轮当前会话请求；持续失败报告状态11并停止主动请求。超时后，后续独立通知可以再次触发有上限的恢复，收到有效新回复/新对象后恢复。启动时第3/10/30/60秒强制重发当前状态，补偿通知丢失；没有周期轮询。不会通过猜测档位反复调用私有方法。
+- 通知读取重试耗尽后，最多追加一轮当前会话请求；持续失败报告状态11并停止主动请求。超时后保持恢复锁存；只有有效回复或新对象才重新允许恢复，避免由自身请求回复触发无限循环。有效的新回复仍会恢复档位。启动时第3/10/30/60秒强制重发当前状态，补偿通知丢失；没有周期轮询。不会通过猜测档位反复调用私有方法。
 - 发布状态写入或通知发送失败时立即使去重缓存失效；快速切回原档位（包括 Off）仍纠正共享状态，旧的延迟任务不能覆盖新设置。
 - 系统可能因热策略降低性能与帧率；插件没有独立的后台冻结、固定频率或帧率控制功能。
 - 不能与其他 PowerCuff 变种同时安装；Hello CPU 等其他热控插件不一定被包冲突规则识别，首次验证应停用其他热控插件。

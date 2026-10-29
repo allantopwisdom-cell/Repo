@@ -1,35 +1,31 @@
-# Powercuff 1.3.6 上传源码构建说明
+# Powercuff 1.3.6 云端构建与恢复循环修复
 
-## 来源与范围
+## 来源与复现
 
-- 输入：用户上传的 `powercuff-repair-source-unverified.tar.gz`。
-- 输入归档 SHA-256：`e7e9ef279e1bf4997799088e26fb1a68fb5f62dea1ccfefd74530748202f5151`。
-- 比较基线：已发布 v1.3.5，提交 `392e11c4bbf5ca5baf8c9e5a139423f51fea0ba0`。
-- 输入目录名为 powercuff-1.3.6，control/README 仍写 1.3.5；本次统一发行元数据为 1.3.6。
-- 运行源码、维护脚本及其回归测试使用上传内容；本次补齐版本、说明、构建发布流程及版本化 arm64e ABI 门禁。这不是一次新的全量源码审计。
+基线为用户上传的 powercuff-repair-source-unverified.tar.gz（SHA-256 e7e9ef279e1bf4997799088e26fb1a68fb5f62dea1ccfefd74530748202f5151），以及由该源码构建但未经 macOS 执行测试的本地 1.3.6。
 
-## 上传内容相对 v1.3.5 的变化
+macOS 15 / Xcode 16.4 上的失败运行：https://github.com/allantopwisdom-cell/Repo/actions/runs/40971591488 。38 项 Python、C 协议、plist 和 Foundation/runtime 测试通过后，持续读取失败的生产核心用例触发 Drain 的 1000 任务上限，退出码 134。该次运行未构建和发布 Release；此前本地 1.3.6 包请暂停安装，改用通过该回归的最终云端包。
 
-1. `PCRCore.h`：有上限的请求恢复超时后清除 PCRRecoveryRequested，使后续独立状态通知可以重新触发恢复；超时路径自身不安排周期请求。
-2. `Powercuff.x`：启动第 3/10/30/60 秒调用 PCRPublish(YES)，强制重发当前值以补偿先前丢失的通知；读取的是执行时的当前配置。
-3. `postinst` / `postrm`：保留 launchctl/TERM 原始诊断和退出码，明确“请求已接受”或“TERM 已发送”不证明 daemon 重载完成。安装/卸载后仍需手动注销。
-4. `tests/test_core.m`：新增超时后独立通知重新恢复、强制重发补偿丢失投递的生产核心执行用例。
-5. `tests/test_scripts.py`：覆盖命令缺失、两个命令均失败、成功请求不等于重载成功，以及非目标维护阶段不执行操作。
+原因：上传源码在 PCRRequestFresh 超时时清除 PCRRecoveryRequested。请求引发的发布通知仍可能留下延迟读取；持续读取失败时，后续耗尽路径因锁存已清除而再次启动请求。请求、回复通知、读取重试形成反馈循环。此处是模拟真实生产核心逻辑的故障复现，尚不等同于真机耗电/watchdog 复现。
 
-## 构建与发布门禁
+## 精确修复
 
-发行流程已从 macOS 14 迁移至 macOS 15：GitHub 的 macOS 14 镜像在 2026-10-29 14:00 UTC 至 2026-10-30 00:00 UTC 处于停用演练，并将于 2026-11-02 退役。当前镜像的软件清单提供 Xcode 16.4。目标仍为 iOS 16.0 起、固定 iPhoneOS16.5 SDK；实际环境与工具版本随构建产物记录。公告：https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/ 。
+- 请求超时保持 PCRRecoveryRequested 锁存；只有有效的当前会话回复或新 product 对象才重新允许请求恢复。每个失败阶段的主动请求仍有上限，不由自身延迟通知递归启动下一轮。
+- 有效的晚到发布可恢复档位并重新允许下一次恢复；任意无效通知不解除锁存。
+- 保留上传源码的第 3/10/30/60 秒强制启动重发和安装/卸载诊断修订。
+- 保留持续读取失败的原始限次回归；修订新增用例，明确验证无效通知不再触发请求、有效晚回复可恢复。没有提高或删除 Drain 上限，也没有跳过失败用例。
+- 保留已授权的 1.3.6 发行版本；最终云端包与早先本地包必须通过源码提交和 SHA-256 区分。请重新安装 Release 中的新包并注销一次。不是一次全量源码审计。
 
-macOS 15 / Xcode 16.4 上执行全部 Python 测试、C 协议测试及真实 Foundation/runtime/生产核心测试，然后使用固定提交的 RootHide Theos 和 iOS 16.5 SDK 编译 arm64e、签名、规范化并打包。
+## 编译与发布
 
-`build.sh` 验证实际 DEB、Mach-O/签名完整性、RootHide 路径、依赖、注入白名单以及与本提交维护脚本和资源的一致性，并执行实际包反例测试。额外强制 CPU subtype 为 0x80000002（版本化 arm64e userland PAC00）；实际 DEB 反例必须以准确的 ABI 原因拒绝未版本化的 0x2，不能仅验证架构低位。失败时不发布。
+macOS 15 / Xcode 16.4；固定 RootHide Theos cfba89a53a05b4a1b822121158acc3669c20602f 和 iPhoneOS16.5 SDK 0222fd5413cf4b9af096f37b4621afa2688572f7。最低部署 iOS 16.0，包架构 iphoneos-arm64e，注入范围仅 SpringBoard/thermalmonitord。
 
-产物附 SOURCE_COMMIT、SOURCE_FILES.sha256、SOURCE_TESTS.txt、TOOLCHAIN_REFS、BUILD_ENVIRONMENT.txt、verification.txt、VERSION、构建说明和 SHA256SUMS。上传源码不附带本轮构建的新 DEB；根目录内较旧 DEB 是继承的历史文件，不用于发布。
+发布前必须通过全部 Python/C、真实 Foundation/runtime/生产核心执行测试、编译/签名、CPU subtype 0x80000002（userland PAC00）、签名完整性、实际 DEB 与源码资源对照及实际包反例。原始未版本化 0x2 ABI 包必须被准确拒绝。
 
-发布任务仅在 `release/powercuff-1.3.6` 的 push 且构建成功后执行，从同一次运行下载产物，核对版本/源码提交和全部附件哈希，再创建新 Pre-release；不覆盖现有 Release。构建结果以该次 Actions 日志和附件为准，本文不预先宣称 CI 成功。
+仅 release/powercuff-1.3.6 的 push 且 build 成功才发布；下载同次运行产物，核对 VERSION、SOURCE_COMMIT、SHA256SUMS 后创建新 Pre-release，不覆盖现有 Release。附件包括构建说明、完整测试输出、包验证、SOURCE_FILES.sha256、源码提交和实际工具链环境。成功与否以对应 Actions/附件为准。
 
-## 真机边界
+macOS 14 已迁移：GitHub 当前停用演练公告 https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/ 。
 
-目标为 iPhone 14 Pro Max（iPhone15,3）/ iOS 16.5（20F66）/ RootHide Dopamine 3.0.4。未连接目标设备，未验证安装/升级/卸载、实际 PAC 加载、私有 API 线程契约、温控恢复、watchdog 长期稳定性或续航收益。
+## 验证边界
 
-安装后注销一次，先验证 Off → Light → Off 和低电量模式进入/退出，再记录 daemon 崩溃、重启恢复和温控表现。`verify-on-device.sh` 是当前基础只读诊断入口；1.3.4 专用工具仅适用于历史包。
+面向 iPhone 14 Pro Max / iOS 16.5 / RootHide Dopamine 3.0.4。未连接目标设备；实际 PAC 加载、私有 API、温控/性能恢复、崩溃/watchdog 和续航仍需真机验收。安装或升级后注销一次，先验证 Off → Light → Off 及低电量模式进入/退出。1.3.4 专用采集工具仅适用于历史包；当前基础只读诊断使用 verify-on-device.sh。

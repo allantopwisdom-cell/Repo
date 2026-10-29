@@ -3,7 +3,7 @@ name: Validate and build Powercuff RootHide
 on:
   pull_request:
   push:
-    branches: [main, master, 'audit/**', 'fix/**', 'review/**']
+    branches: [main, master, 'audit/**', 'fix/**', 'review/**', 'release/**']
   workflow_dispatch:
 
 permissions:
@@ -70,12 +70,15 @@ jobs:
           test "$count" = 1
           PACKAGE=$(find packages -name '*.deb' -type f)
           cp SOURCE_TESTS.txt packages/SOURCE_TESTS.txt
-          cp "AUDIT-$VERSION.md" packages/
-          (cd packages && shasum -a 256 "$(basename "$PACKAGE")" > SHA256SUMS)
+          cp "BUILD-$VERSION.md" "RELEASE-$VERSION.md" packages/
+          printf '%s\n' "$VERSION" > packages/VERSION
           git rev-parse HEAD > packages/SOURCE_COMMIT
           git ls-files -z | xargs -0 shasum -a 256 > packages/SOURCE_FILES.sha256
           printf 'THEOS=%s\nSDK=%s\n' "$THEOS_REF" "$SDK_REF" > packages/TOOLCHAIN_REFS
           { xcodebuild -version; clang --version; python3 --version; ldid -v 2>&1 || true; dpkg-deb --version; brew list --versions ldid dpkg xz; } > packages/BUILD_ENVIRONMENT.txt
+          (cd packages && for file in ./*; do
+            if [[ "$file" != ./SHA256SUMS ]]; then shasum -a 256 "$file"; fi
+          done > SHA256SUMS)
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             test "${GITHUB_REF#refs/tags/}" = "v$VERSION"
           fi
@@ -86,3 +89,39 @@ jobs:
           path: packages/
           if-no-files-found: error
           retention-days: 90
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/release/powercuff-1.3.6'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download and verify this run's build
+        env:
+          ARTIFACT_NAME: Powercuff-RootHide-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT_NAME" --dir packages
+          test "$(cat packages/VERSION)" = 1.3.6
+          test "$(cat packages/SOURCE_COMMIT)" = "$GITHUB_SHA"
+          (cd packages && sha256sum -c SHA256SUMS)
+      - name: Publish a new public test release
+        run: |
+          set -euo pipefail
+          VERSION=$(cat packages/VERSION)
+          TAG="v$VERSION"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          cp "packages/RELEASE-$VERSION.md" release-notes.md
+          printf '\n源码提交：`%s`。\n\n[GitHub Actions 构建](https://github.com/%s/actions/runs/%s)。\n\n附件 SHA-256：\n\n```text\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
+          cat packages/SHA256SUMS >> release-notes.md
+          printf '```\n' >> release-notes.md
+          gh release create "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Powercuff v$VERSION — RootHide 公测修订版" --notes-file release-notes.md --prerelease --latest=false
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,tagName,isDraft,isPrerelease,assets

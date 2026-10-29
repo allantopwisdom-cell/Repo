@@ -135,6 +135,7 @@ def verify(path, expected_version, source_root=None):
     item, binary = files[lib + '.dylib']
     magic, cpu, subtype, filetype, ncmds, cmdsize, flags, reserved = struct.unpack_from('<8I', binary)
     assert magic == 0xFEEDFACF and cpu == 0x0100000C and (subtype & 0xFFFFFF) == 2, 'not thin arm64e'
+    assert subtype == 0x80000002, 'unversioned/unsupported arm64e ABI; expected userland PAC00'
     assert filetype == 6 and ncmds > 0, 'not a dylib'
     offset, signed, install_id = 32, False, ''
     signature_range = None
@@ -183,7 +184,7 @@ def verify(path, expected_version, source_root=None):
     for pref in preferences.values():
         assert pref['defaults'] == fields['Package']
         assert pref['PostNotification'] == fields['Package'] + '.settingschanged'
-    print(f'PASS {path}: version={fields["Version"]}, thin arm64e, CodeDirectory code/special hashes, iOS deployment, payload allowlist, RootHide paths, preferences, scripts')
+    print(f'PASS {path}: version={fields["Version"]}, thin versioned arm64e PAC00, CodeDirectory code/special hashes, iOS deployment, payload allowlist, RootHide paths, preferences, scripts')
     print('SHA256 ' + hashlib.sha256(Path(path).read_bytes()).hexdigest())
 
 

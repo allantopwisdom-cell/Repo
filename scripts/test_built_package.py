@@ -118,6 +118,10 @@ def mutate_tar(blob, scenario, archive_name):
                 payload = payload[:-1] + bytes([payload[-1] ^ 1]); changed = True
             elif scenario == 'unreadable-dylib' and item.name.endswith('.dylib'):
                 item.mode = 0; changed = True
+            elif scenario == 'legacy-arm64e-abi' and item.name.endswith('.dylib'):
+                payload = bytearray(payload)
+                struct.pack_into('<I', payload, 8, 2)
+                payload = bytes(payload); changed = True
             elif scenario == 'unreviewed-dependency' and item.name.removeprefix('./') == 'control':
                 payload = payload.replace(b'preferenceloader', b'unreviewed-dependency'); changed = True
             if payload is not None: item.size = len(payload)
@@ -128,7 +132,7 @@ def mutate_tar(blob, scenario, archive_name):
     return lzma.compress(raw, format=lzma.FORMAT_XZ if archive_name.endswith('.xz') else lzma.FORMAT_ALONE)
 
 with tempfile.TemporaryDirectory() as directory:
-    for scenario in ('unreviewed-script', 'changed-icon', 'unreadable-dylib', 'unreviewed-dependency',
+    for scenario in ('unreviewed-script', 'changed-icon', 'unreadable-dylib', 'legacy-arm64e-abi', 'unreviewed-dependency',
                      'reordered-members', 'compression-name-mismatch'):
         damaged = dict(members)
         if scenario == 'reordered-members':
@@ -152,6 +156,7 @@ with tempfile.TemporaryDirectory() as directory:
         except AssertionError as error:
             expected_reason = {'unreviewed-script': 'postinst differs', 'changed-icon': 'differs from source',
                                'unreadable-dylib': 'incorrect payload permissions',
+                               'legacy-arm64e-abi': 'unversioned/unsupported arm64e ABI',
                                'unreviewed-dependency': 'control metadata differs',
                                'reordered-members': 'member order',
                                'compression-name-mismatch': 'compression does not match'}[scenario]

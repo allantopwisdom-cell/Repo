@@ -1,17 +1,38 @@
 #!/bin/sh
-# Do not write preferences as root: SpringBoard and Settings use the mobile domain.
+# Never modify mobile preferences from a root maintainer script.
 case "${1:-}" in
     configure)
-        if command -v launchctl >/dev/null 2>&1 &&
-           launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1; then
-            :
-        elif command -v killall >/dev/null 2>&1; then
-            killall -TERM thermalmonitord >/dev/null 2>&1 ||
-                echo 'Powercuff: thermal daemon reload could not be confirmed; respring/reboot and verify.' >&2
+        if command -v launchctl >/dev/null 2>&1; then
+            if launchctl kickstart -k system/com.apple.thermalmonitord; then
+                echo 'Powercuff: launchctl accepted the thermal daemon restart request; successful reload is not confirmed.'
+            else
+                status=$?
+                echo "Powercuff: launchctl kickstart failed (exit $status); attempting TERM fallback." >&2
+                if command -v killall >/dev/null 2>&1; then
+                    if killall -TERM thermalmonitord; then
+                        echo 'Powercuff: TERM sent to thermalmonitord; daemon restart and reload are not confirmed.' >&2
+                    else
+                        status=$?
+                        echo "Powercuff: TERM fallback failed (exit $status); daemon reload is not confirmed." >&2
+                    fi
+                else
+                    echo 'Powercuff: killall unavailable; daemon reload is not confirmed.' >&2
+                fi
+            fi
         else
-            echo 'Powercuff: no daemon reload command available; respring/reboot and verify.' >&2
+            echo 'Powercuff: launchctl unavailable; attempting TERM fallback.' >&2
+            if command -v killall >/dev/null 2>&1; then
+                if killall -TERM thermalmonitord; then
+                    echo 'Powercuff: TERM sent to thermalmonitord; daemon restart and reload are not confirmed.' >&2
+                else
+                    status=$?
+                    echo "Powercuff: TERM fallback failed (exit $status); daemon reload is not confirmed." >&2
+                fi
+            else
+                echo 'Powercuff: killall unavailable; daemon reload is not confirmed.' >&2
+            fi
         fi
-        echo 'Powercuff: respring once to load the matching SpringBoard publisher.'
+        echo 'Powercuff: manually respring once to load the matching SpringBoard publisher, then verify daemon reload.'
         ;;
 esac
 exit 0

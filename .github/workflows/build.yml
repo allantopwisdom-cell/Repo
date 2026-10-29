@@ -26,7 +26,7 @@ env:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -35,7 +35,7 @@ jobs:
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: '15.4'
+          xcode-version: '16.4'
       - name: Source regression checks
         run: sh scripts/check.sh 2>&1 | tee SOURCE_TESTS.txt
       - name: Checkout pinned RootHide Theos

@@ -18,7 +18,9 @@
 
 ## 构建与发布门禁
 
-macOS 14 / Xcode 15.4 上执行全部 Python 测试、C 协议测试及真实 Foundation/runtime/生产核心测试，然后使用固定提交的 RootHide Theos 和 iOS 16.5 SDK 编译 arm64e、签名、规范化并打包。
+发行流程已从 macOS 14 迁移至 macOS 15：GitHub 的 macOS 14 镜像在 2026-10-29 14:00 UTC 至 2026-10-30 00:00 UTC 处于停用演练，并将于 2026-11-02 退役。当前镜像的软件清单提供 Xcode 16.4。目标仍为 iOS 16.0 起、固定 iPhoneOS16.5 SDK；实际环境与工具版本随构建产物记录。公告：https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/ 。
+
+macOS 15 / Xcode 16.4 上执行全部 Python 测试、C 协议测试及真实 Foundation/runtime/生产核心测试，然后使用固定提交的 RootHide Theos 和 iOS 16.5 SDK 编译 arm64e、签名、规范化并打包。
 
 `build.sh` 验证实际 DEB、Mach-O/签名完整性、RootHide 路径、依赖、注入白名单以及与本提交维护脚本和资源的一致性，并执行实际包反例测试。额外强制 CPU subtype 为 0x80000002（版本化 arm64e userland PAC00）；实际 DEB 反例必须以准确的 ABI 原因拒绝未版本化的 0x2，不能仅验证架构低位。失败时不发布。
 

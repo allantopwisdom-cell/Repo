@@ -34,7 +34,7 @@ python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.6 --so
 
 构建需要 Python 3；Git 源码提交时间用于归档时间，下载源码 ZIP 时请显式设置 `SOURCE_DATE_EPOCH`。构建检查失败会以非零状态退出，勿安装失败构建留下的原始包。
 
-[GitHub Actions](https://github.com/allantopwisdom-cell/Repo/actions) 使用 macOS 14 / Xcode 15.4 / iPhoneOS 16.5 SDK。RootHide Theos 与 SDK 使用固定提交；主项目第三方 Actions 也固定到已核对的提交；设置 Xcode 后才执行 host 回归。打包后统一数值 UID/GID 为 0/0，归档时间来自源码提交；签名 payload 字节不变。PR、主分支及 `audit/**`、`fix/**`、`review/**`、`release/**` 分支执行回归测试、编译与包验证。每份产物附源码提交、全部跟踪文件 SHA-256、工具链引用、实际构建环境与完整源码测试输出。只有 `release/powercuff-1.3.6` 的 push 在构建完全通过后，使用同一提交的产物创建 v1.3.6 公测 Release；标签不重编译，同名 Release 不自动覆盖。
+[GitHub Actions](https://github.com/allantopwisdom-cell/Repo/actions) 使用 macOS 15 / Xcode 16.4 / iPhoneOS 16.5 SDK。RootHide Theos 与 SDK 使用固定提交；主项目第三方 Actions 也固定到已核对的提交；设置 Xcode 后才执行 host 回归。打包后统一数值 UID/GID 为 0/0，归档时间来自源码提交；签名 payload 字节不变。PR、主分支及 `audit/**`、`fix/**`、`review/**`、`release/**` 分支执行回归测试、编译与包验证。每份产物附源码提交、全部跟踪文件 SHA-256、工具链引用、实际构建环境与完整源码测试输出。只有 `release/powercuff-1.3.6` 的 push 在构建完全通过后，使用同一提交的产物创建 v1.3.6 公测 Release；标签不重编译，同名 Release 不自动覆盖。
 
 包验证检查：Debian 成员顺序与压缩格式、精确版本、arm64e Mach-O、CodeDirectory 版本布局及代码页/特殊槽覆盖和哈希、数值属主 0/0、iOS 部署目标、文件清单、RootHide install ID、限定注入范围、偏好键一致性、控制脚本执行位、精确依赖集合；使用 `--source-root` 对照维护脚本、控制元数据、静态 plist 和图标。代码页及特殊槽完整性通过不证明证书信任、PAC 运行行为或设备加载成功。
 

@@ -74,7 +74,7 @@ static id PCRLPMObserver;
             dispatch_async(PCRQueue, ^{ PCRPublish(YES); });
             for (NSNumber *delay in @[@3, @10, @30, @60]) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
-                               PCRQueue, ^{ PCRPublish(NO); });
+                               PCRQueue, ^{ PCRPublish(YES); });
             }
         }
     }

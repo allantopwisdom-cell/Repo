@@ -215,6 +215,23 @@ int main(void) {
         assert(product.calls == 1 && Status() == 3);
         puts("Core: missing publisher times out without polling; late valid reply recovers PASS");
 
+        // A failed recovery must not permanently suppress later event-driven recovery.
+        Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
+        Respond = NO; States[@(PCRStateToken)] = @(0);
+        before = RequestPosts; PCRApplyAttempt(0, ++PCRApplyGeneration); Drain();
+        assert(RequestPosts - before == 6 && Status() == 11 && !PCRRecoveryRequested);
+        Respond = YES; before = RequestPosts;
+        PCRApplyAttempt(0, ++PCRApplyGeneration); Drain();
+        assert(RequestPosts > before && Status() == 3 && product.calls == 1 && Tasks.count == 0);
+        puts("Core: timed-out recovery is rearmed by a later independent notification PASS");
+
+        // A successful post may still be lost; a forced startup replay must post again.
+        Reset(); product = [TestProduct new]; Deliver = NO;
+        PCRCaptureProduct(product); Drain(); assert(product.calls == 0 && Status() == 11);
+        Deliver = YES; before = ModePosts; PCRPublish(YES); Drain();
+        assert(ModePosts == before + 1 && product.calls == 1 && Status() == 3);
+        puts("Core: forced replay recovers a lost mode delivery PASS");
+
         Reset(); product = [TestProduct new]; Preferences = @{};
         PCRCaptureProduct(product); Drain();
         assert(product.calls == 1 && [product.mode isEqual:@"off"] && Status() == 0);

@@ -122,10 +122,16 @@ def mutate_tar(blob, scenario, archive_name):
                 payload = bytearray(payload)
                 struct.pack_into('<I', payload, 8, 2)
                 payload = bytes(payload); changed = True
+            elif scenario == 'trailing-file-slash' and item.name.removeprefix('./') == 'postinst':
+                item.name += '/'; changed = True
             elif scenario == 'unreviewed-dependency' and item.name.removeprefix('./') == 'control':
                 payload = payload.replace(b'preferenceloader', b'unreviewed-dependency'); changed = True
             if payload is not None: item.size = len(payload)
             target.addfile(item, io.BytesIO(payload) if payload is not None else None)
+        if scenario in ('extra-control-directory', 'extra-data-directory'):
+            extra = tarfile.TarInfo('unreviewed-empty-directory')
+            extra.type, extra.mode, extra.uid, extra.gid = tarfile.DIRTYPE, 0o755, 0, 0
+            target.addfile(extra); changed = True
     assert changed
     raw = out.getvalue()
     if archive_name.endswith('.gz'): return gzip.compress(raw, mtime=0)
@@ -133,7 +139,8 @@ def mutate_tar(blob, scenario, archive_name):
 
 with tempfile.TemporaryDirectory() as directory:
     for scenario in ('unreviewed-script', 'changed-icon', 'unreadable-dylib', 'legacy-arm64e-abi', 'unreviewed-dependency',
-                     'reordered-members', 'compression-name-mismatch'):
+                     'reordered-members', 'compression-name-mismatch', 'extra-control-directory', 'extra-data-directory',
+                     'trailing-file-slash'):
         damaged = dict(members)
         if scenario == 'reordered-members':
             damaged = dict(reversed(list(damaged.items())))
@@ -142,7 +149,8 @@ with tempfile.TemporaryDirectory() as directory:
             wrong_name = 'control.tar.xz' if control_name.endswith('.gz') else 'control.tar.gz'
             damaged = {(wrong_name if name == control_name else name): blob for name, blob in damaged.items()}
         else:
-            name = control_name if scenario in ('unreviewed-script', 'unreviewed-dependency') else data_name
+            name = control_name if scenario in ('unreviewed-script', 'unreviewed-dependency', 'extra-control-directory',
+                                                'trailing-file-slash') else data_name
             damaged[name] = mutate_tar(damaged[name], scenario, name)
         data = bytearray(b'!<arch>\n')
         for name, payload in damaged.items():
@@ -159,7 +167,10 @@ with tempfile.TemporaryDirectory() as directory:
                                'legacy-arm64e-abi': 'unversioned/unsupported arm64e ABI',
                                'unreviewed-dependency': 'control metadata differs',
                                'reordered-members': 'member order',
-                               'compression-name-mismatch': 'compression does not match'}[scenario]
+                               'compression-name-mismatch': 'compression does not match',
+                               'extra-control-directory': 'unexpected package directory',
+                               'extra-data-directory': 'unexpected package directory',
+                               'trailing-file-slash': 'noncanonical package file path'}[scenario]
             assert expected_reason in str(error), f'{scenario} failed for an unrelated reason: {error}'
         else:
             raise AssertionError(f'actual DEB mutation {scenario} was accepted')

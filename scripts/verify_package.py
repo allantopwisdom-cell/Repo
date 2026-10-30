@@ -14,6 +14,12 @@ if not __debug__:
     raise RuntimeError("Package validation requires Python without -O")
 from macho_signature import verify_signature
 
+LIBRARY = 'Library/MobileSubstrate/DynamicLibraries/PowercuffBaldaranTrusted'
+PANEL_PATH = 'Library/PreferenceLoader/Preferences/PowercuffBaldaranTrusted/'
+CONTROL_FILES = {'control', 'postinst', 'prerm', 'postrm'}
+PAYLOAD_FILES = {LIBRARY + '.dylib', LIBRARY + '.plist'} | {PANEL_PATH + name for name in
+                 ('Powercuff.plist', 'icon.png', 'Powercuff@2x.png', 'Powercuff@3x.png')}
+
 
 def ar_members(path):
     data = Path(path).read_bytes()
@@ -37,10 +43,16 @@ def ar_members(path):
     return result
 
 
-def tar_members(data):
+def tar_members(data, allowed_files=None):
+    allowed_directories = {'.'}
+    if allowed_files is not None:
+        for path in allowed_files:
+            parts = path.split('/')
+            allowed_directories.update('/'.join(parts[:i]) for i in range(1, len(parts)))
     with tarfile.open(fileobj=io.BytesIO(data), mode='r:*') as archive:
         result, seen = {}, set()
         for item in archive:
+            assert item.isdir() or not item.name.endswith('/'), 'unsafe/noncanonical package file path'
             name = item.name.removeprefix('./').rstrip('/')
             assert name == '.' and item.isdir() or all(part not in ('', '.', '..') for part in name.split('/')), 'unsafe/noncanonical package path'
             assert name not in seen, 'duplicate archive path'
@@ -49,12 +61,14 @@ def tar_members(data):
             assert (item.uid, item.gid) == (0, 0) and not item.mode & 0o7022, 'unsafe numeric ownership or permissions'
             if item.isdir():
                 assert item.mode == 0o755, 'package directory must be traversable mode 0755'
+                assert allowed_files is None or name in allowed_directories, 'unexpected package directory'
                 continue
+            assert allowed_files is None or name in allowed_files, 'unexpected package file'
             result[name] = (item, archive.extractfile(item).read())
         return result
 
 
-def package_archives(members):
+def package_archives(members, allowed_files=None):
     names = list(members)
     assert len(names) == 3 and names[0] == 'debian-binary', 'incorrect Debian member order/count'
     result = []
@@ -67,7 +81,7 @@ def package_archives(members):
                    lzma.decompress(members[name], format=lzma.FORMAT_XZ if suffix == 'xz' else lzma.FORMAT_ALONE))
         except (OSError, EOFError, lzma.LZMAError) as error:
             raise AssertionError('Debian compression does not match member name') from error
-        result.append(tar_members(raw))
+        result.append(tar_members(raw, allowed_files[len(result)] if allowed_files is not None else None))
     return tuple(result)
 
 
@@ -109,8 +123,8 @@ def verify_source_contents(controls, files, source_root):
 
 def verify(path, expected_version, source_root=None):
     members = ar_members(path)
-    controls, files = package_archives(members)
-    assert set(controls) == {'control', 'postinst', 'prerm', 'postrm'}, 'unexpected or missing control file'
+    controls, files = package_archives(members, (CONTROL_FILES, PAYLOAD_FILES))
+    assert set(controls) == CONTROL_FILES, 'unexpected or missing control file'
     fields = control_fields(controls['control'][1])
     assert fields['Package'] == 'com.minis.powercuff-baldaran-trusted'
     assert fields['Architecture'] == 'iphoneos-arm64e'
@@ -120,11 +134,8 @@ def verify(path, expected_version, source_root=None):
         assert item.mode & 0o111 == 0o111, f'{name} not executable'
         assert contents.startswith(b'#!/bin/sh\n')
         assert b'killall -9' not in contents and b'defaults write' not in contents
-    lib = 'Library/MobileSubstrate/DynamicLibraries/PowercuffBaldaranTrusted'
-    panel_path = 'Library/PreferenceLoader/Preferences/PowercuffBaldaranTrusted/'
-    expected_files = {lib + '.dylib', lib + '.plist'} | {panel_path + name for name in
-                     ('Powercuff.plist', 'icon.png', 'Powercuff@2x.png', 'Powercuff@3x.png')}
-    assert set(files) == expected_files, 'unexpected or missing package payload'
+    lib = LIBRARY
+    assert set(files) == PAYLOAD_FILES, 'unexpected or missing package payload'
     for name, (item, _) in files.items():
         assert item.mode == (0o755 if name.endswith('.dylib') else 0o644), f'incorrect payload permissions: {name}'
     assert controls['control'][0].mode == 0o644, 'control metadata permissions'

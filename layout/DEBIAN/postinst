@@ -1,17 +1,41 @@
 #!/bin/sh
-DOMAIN=com.minis.powercuff-baldaran-trusted
-
-if command -v defaults >/dev/null 2>&1; then
-    if ! defaults read "$DOMAIN" PowerMode >/dev/null 2>&1; then
-        defaults write "$DOMAIN" PowerMode -int 0 2>/dev/null || true
-    fi
-    if ! defaults read "$DOMAIN" RequireLowPowerMode >/dev/null 2>&1; then
-        defaults write "$DOMAIN" RequireLowPowerMode -bool NO 2>/dev/null || true
-    fi
-fi
-
-if command -v launchctl >/dev/null 2>&1; then
-    launchctl kickstart -k system/com.apple.thermalmonitord >/dev/null 2>&1 || true
-fi
-command -v killall >/dev/null 2>&1 && killall -9 thermalmonitord >/dev/null 2>&1 || true
+# Preserve mobile preferences. Command success is not proof of a successful reload.
+case "${1:-}" in
+    configure)
+        target=
+        need_fallback=0
+        if command -v launchctl >/dev/null 2>&1; then
+            # Probes only select a service domain; they do not prove reload.
+            if launchctl print user/foreground/com.apple.thermalmonitord >/dev/null 2>&1; then
+                target=user/foreground/com.apple.thermalmonitord
+            elif launchctl print system/com.apple.thermalmonitord >/dev/null 2>&1; then
+                target=system/com.apple.thermalmonitord
+            else
+                echo 'Powercuff: thermal service domain unresolved; automatic restart skipped. Use the jailbreak app to restart user space if daemon reload cannot be confirmed.' >&2
+            fi
+            if [ -n "$target" ]; then
+                echo "Powercuff: selected thermal service $target."
+                if launchctl kickstart -k "$target"; then
+                    echo 'Powercuff: launchctl accepted the thermal daemon restart request; successful reload is not confirmed.'
+                else
+                    status=$?
+                    need_fallback=1
+                    echo "Powercuff: launchctl kickstart failed (exit $status); attempting TERM fallback." >&2
+                fi
+            fi
+        else
+            echo 'Powercuff: launchctl unavailable; automatic restart skipped. Use the jailbreak app to restart user space if daemon reload cannot be confirmed.' >&2
+        fi
+        # Only a selected service whose kickstart failed permits one fallback.
+        if [ "$need_fallback" = 1 ]; then
+            if launchctl kill SIGTERM "$target"; then
+                echo 'Powercuff: TERM sent to the selected thermal service; daemon restart and reload are not confirmed.' >&2
+            else
+                status=$?
+                echo "Powercuff: TERM fallback failed (exit $status); daemon reload is not confirmed." >&2
+            fi
+        fi
+        echo 'Powercuff: manually respring once to load the matching SpringBoard publisher, then verify daemon reload.'
+        ;;
+esac
 exit 0

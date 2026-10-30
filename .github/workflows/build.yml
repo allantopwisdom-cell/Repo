@@ -1,86 +1,144 @@
-name: Build PowerCuff Baldaran RootHide arm64e
+name: Validate and build Powercuff RootHide
 
 on:
+  pull_request:
   push:
-    branches: [main, master]
+    branches: [main, master, 'audit/**', 'fix/**', 'review/**', 'release/**']
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: powercuff-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
   THEOS: ${{ github.workspace }}/theos-roothide
+  THEOS_REF: cfba89a53a05b4a1b822121158acc3669c20602f
+  SDK_REF: 0222fd5413cf4b9af096f37b4621afa2688572f7
 
 jobs:
   build:
-    name: Build (roothide)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 25
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          persist-credentials: false
       - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: '15.4'
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Theos path
-        run: |
-          echo "$THEOS/bin" >> "$GITHUB_PATH"
-          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
-          echo "THEOS_IGNORE_PARALLEL_BUILDING_NOTICE=yes" >> "$HOME/.theosrc"
-
-      - name: Checkout Theos (RootHide)
-        uses: actions/checkout@v4
+          xcode-version: '16.4'
+      - name: Source regression checks
+        run: sh scripts/check.sh 2>&1 | tee SOURCE_TESTS.txt
+      - name: Checkout pinned RootHide Theos
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
         with:
           repository: roothide/theos
+          ref: ${{ env.THEOS_REF }}
           path: theos-roothide
           submodules: recursive
-
-      - name: Install iOS SDK (iPhoneOS16.5)
+          persist-credentials: false
+      - name: Install pinned iOS 16.5 SDK
         run: |
           set -euo pipefail
-          mkdir -p "$THEOS/sdks"
-          if [ -d "$THEOS/sdks/iPhoneOS16.5.sdk" ]; then
-            echo "iPhoneOS16.5.sdk already present"
-            exit 0
-          fi
           SDK_STAGE="$(mktemp -d)"
           trap 'rm -rf "$SDK_STAGE"' EXIT
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$SDK_STAGE/sdks"
+          git clone --filter=blob:none --no-checkout https://github.com/theos/sdks.git "$SDK_STAGE/sdks"
           git -C "$SDK_STAGE/sdks" sparse-checkout set iPhoneOS16.5.sdk
+          git -C "$SDK_STAGE/sdks" checkout "$SDK_REF"
+          mkdir -p "$THEOS/sdks"
           cp -R "$SDK_STAGE/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
-          ls -1 "$THEOS/sdks"
-
-      - name: Install Theos dependencies
+      - name: Install dependencies
         run: |
           brew install ldid dpkg xz
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
-
-      - name: Build Package
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+      - name: Build and verify package
         run: |
-          chmod +x build.sh
+          set -euo pipefail
           sh build.sh roothide
-          echo "=== .deb files ==="
-          find ./packages -name "*.deb" -type f
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+          VERSION=$(sed -n 's/^Version: //p' control)
+          count=$(find packages -name '*.deb' -type f | wc -l | tr -d ' ')
+          test "$count" = 1
+          PACKAGE=$(find packages -name '*.deb' -type f)
+          cp SOURCE_TESTS.txt packages/SOURCE_TESTS.txt
+          cp "BUILD-$VERSION.md" "RELEASE-$VERSION.md" "AUDIT-$VERSION.md" packages/
+          cp scripts/verify_release.py packages/verify_release.py
+          printf '%s\n' "$VERSION" > packages/VERSION
+          git rev-parse HEAD > packages/SOURCE_COMMIT
+          git ls-files -z | xargs -0 shasum -a 256 > packages/SOURCE_FILES.sha256
+          printf 'THEOS=%s\nSDK=%s\n' "$THEOS_REF" "$SDK_REF" > packages/TOOLCHAIN_REFS
+          { xcodebuild -version; clang --version; python3 --version; ldid -v 2>&1 || true; dpkg-deb --version; brew list --versions ldid dpkg xz; } > packages/BUILD_ENVIRONMENT.txt
+          (cd packages && for file in ./*; do
+            if [[ "$file" != ./SHA256SUMS ]]; then shasum -a 256 "$file"; fi
+          done > SHA256SUMS)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "${GITHUB_REF#refs/tags/}" = "v$VERSION"
+          fi
+      - name: Upload verified package and provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, Node 24
         with:
-          name: PowerCuff-Baldaran-Trusted-arm64e
-          path: ./packages/*.deb
+          name: Powercuff-RootHide-${{ github.sha }}
+          path: packages/
+          archive: true
           if-no-files-found: error
+          retention-days: 90
 
-      - name: Create Release
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ github.token }}
-          tag_name: v1.0.0-1
-          name: PowerCuff Baldaran Trusted RootHide v1.0.0-1
-          files: ./packages/*.deb
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/release/powercuff-1.3.10'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download and verify this run's build
+        env:
+          ARTIFACT_NAME: Powercuff-RootHide-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT_NAME" --dir packages
+          test "$(cat packages/VERSION)" = 1.3.10
+          test "$(cat packages/SOURCE_COMMIT)" = "$GITHUB_SHA"
+          (cd packages && sha256sum -c SHA256SUMS)
+      - name: Publish a new formal release
+        run: |
+          set -euo pipefail
+          VERSION=$(cat packages/VERSION)
+          TAG="v$VERSION"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          cp "packages/RELEASE-$VERSION.md" release-notes.md
+          printf '\n源码提交：`%s`。\n\n[GitHub Actions 构建](https://github.com/%s/actions/runs/%s)。\n\n附件 SHA-256：\n\n```text\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
+          cat packages/SHA256SUMS >> release-notes.md
+          printf '```\n' >> release-notes.md
+          # Create the ref without overwriting any existing tag; release existence
+          # alone does not prove a tag is absent or points to this build.
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA" > tag-created.json
+          test "$(jq -r '.object.sha' tag-created.json)" = "$GITHUB_SHA"
+          # Keep the release private as a draft until EVERY attachment has been
+          # uploaded and matched against this exact successful build.
+          gh release create "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --title "Powercuff v$VERSION — RootHide 正式版" --notes-file release-notes.md --draft --prerelease=false --latest=false
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq --arg tag "$TAG" '[.[] | select(.tag_name == $tag)] | if length == 1 then .[0] else error("expected exactly one draft release") end' > release-created.json
+          RELEASE_ID=$(jq -er '.id | numbers' release-created.json)
+          python3 packages/verify_release.py packages release-created.json --commit "$GITHUB_SHA" --tag "$TAG" --draft --stable
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq '.sha')" = "$GITHUB_SHA"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > release-published.json
+          python3 packages/verify_release.py packages release-published.json --commit "$GITHUB_SHA" --tag "$TAG" --public --stable
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq '.sha')" = "$GITHUB_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.id')" = "$RELEASE_ID"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,tagName,isDraft,isPrerelease,assets

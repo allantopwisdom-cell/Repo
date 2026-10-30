@@ -1,57 +1,52 @@
 #!/bin/sh
-# Read-only self-check for PowerCuff Baldaran Trusted (RootHide).
-# Run on the device as root:  sh verify-on-device.sh
-# It never changes any setting.
-
+# Read-only; run in NewTerm as mobile for the same preference view as Settings.
 DOMAIN=com.minis.powercuff-baldaran-trusted
-THERMALS="$DOMAIN.thermals"
-SETTINGS="$DOMAIN.settingschanged"
-
-# RootHide keeps jailbreak files under a random root; jbroot() maps a
-# jailbreak-relative path to its real location.
-jb() {
-    if command -v jbroot >/dev/null 2>&1; then jbroot "$1"; else printf '%s' "$1"; fi
+if [ "$#" -gt 0 ]; then
+    if [ "$#" = 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+        echo 'Usage: sh verify-on-device.sh (run as mobile; read-only snapshot, not release approval)'
+        exit 0
+    fi
+    echo 'Usage: sh verify-on-device.sh (no arguments; run as mobile)' >&2
+    exit 2
+fi
+uid=$(id -u 2>/dev/null) || {
+    echo 'Cannot determine user identity; repeat in NewTerm as mobile.' >&2
+    exit 2
 }
-
-echo "== 1. installed files =="
+if [ "$uid" != 501 ]; then
+    echo 'Run as mobile (uid 501). Another user defaults domain cannot represent Settings.' >&2
+    exit 2
+fi
+printf 'Powercuff diagnostics (notification values can be stale; not proof of liveness)\n'
+if command -v dpkg-query >/dev/null 2>&1; then
+    dpkg-query -W -f='Installed package: ${Version} ${Architecture}\n' "$DOMAIN" 2>/dev/null ||
+        echo 'Package metadata unavailable; check installation in the package manager.'
+fi
 for f in /Library/MobileSubstrate/DynamicLibraries/PowercuffBaldaranTrusted.dylib \
          /Library/MobileSubstrate/DynamicLibraries/PowercuffBaldaranTrusted.plist \
          /Library/PreferenceLoader/Preferences/PowercuffBaldaranTrusted/Powercuff.plist; do
-    p=$(jb "$f")
-    if [ -f "$p" ]; then echo "  OK   $f"; else echo "  MISS $f"; fi
-done
-
-echo "== 2. preferences (cfprefsd view) =="
+    p=$f
+    if command -v jbroot >/dev/null 2>&1; then
+        mapped=$(jbroot "$f" 2>/dev/null) && [ -n "$mapped" ] && p=$mapped
+    fi
+    if [ -f "$p" ]; then echo "FOUND $p"; else echo "UNRESOLVED $f (check dpkg -L $DOMAIN)"; fi
+ done
 if command -v defaults >/dev/null 2>&1; then
-    defaults read "$DOMAIN" 2>/dev/null || echo "  (domain not readable yet; open Settings once)"
-else
-    echo "  defaults not available"
+    defaults read "$DOMAIN" 2>/dev/null || echo 'Preference domain missing or unreadable; effective mode is unknown. A new install defaults to Off.'
 fi
-
-echo "== 3. published thermal state =="
 if command -v notifyutil >/dev/null 2>&1; then
-    v=$(notifyutil -g "$THERMALS" 2>/dev/null)
-    case "$v" in
-        0|"") echo "  state=${v:-0}  -> Off (stock)" ;;
-        1) echo "  state=1  -> Nominal" ;;
-        2) echo "  state=2  -> Light" ;;
-        3) echo "  state=3  -> Moderate" ;;
-        4) echo "  state=4  -> Heavy" ;;
-        *) echo "  state=$v  -> unexpected" ;;
-    esac
+    for key in loaded.s loaded.t hook request thermals applied; do
+        echo "--- $key ---"
+        notifyutil -g "$DOMAIN.$key" 2>/dev/null || echo 'unavailable'
+    done
 else
-    echo "  notifyutil not available"
+    echo 'notifyutil unavailable: use Console logs, subsystem com.minis.powercuff-baldaran-trusted.'
 fi
-
-echo "== 4. daemon status =="
-if command -v launchctl >/dev/null 2>&1; then
-    launchctl list 2>/dev/null | grep -i thermalmonitord || echo "  thermalmonitord not listed"
-fi
-
-echo
-echo "How to read the result:"
-echo "  - All three files OK and state=0 means installed, defaulting to Off."
-echo "  - Set Profile=Moderate in Settings, wait 2s, rerun: state should become 3."
-echo "  - Set Profile=Off and rerun: state must return to 0."
-echo "  - If state never changes, the tweak is not loaded into SpringBoard:"
-echo "    respring once, then re-check."
+cat <<'HELP'
+loaded.*=1: loader ran at least once; hook=1: product initializer was observed.
+applied 0..4: private method returned; 10: waiting/previous mode may remain; 11: transport timeout/stale mode possible;
+98: ObjC exception; 99: ABI mismatch. State 11 does not mean the previous profile was cleared.
+thermals contains a versioned 64-bit word with a daemon session; stale-session replies are rejected.
+Neither published nor applied state proves CPU throttling or battery improvement.
+Test Off -> Light -> Off, then the LPM gate, and inspect fresh daemon logs/crash reports.
+HELP

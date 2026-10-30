@@ -20,6 +20,10 @@ static int NextToken;
 static NSInteger MajorVersion;
 static uint64_t Clock;
 static BOOL FailCancellation, MissingLPMObserver, UnsupportedClasses, LowPower;
+static BOOL CaptureDuringHook;
+static id HookProduct;
+static unsigned PrivateCalls;
+static NSString *LastPrivateMode;
 static void (^LPMHandler)(NSNotification *);
 
 @interface PCRStartupDefaults : NSUserDefaults
@@ -63,7 +67,7 @@ static void (^LPMHandler)(NSNotification *);
 @end
 @implementation PCRStartupCommon
 - (id)initProduct:(id)argument { (void)argument; return self; }
-- (void)putDeviceInThermalSimulationMode:(id)mode { (void)mode; assert(0 && "unexpected private dispatch"); }
+- (void)putDeviceInThermalSimulationMode:(id)mode { ++PrivateCalls; LastPrivateMode = [mode copy]; }
 @end
 @interface PCRStartupInherited : PCRStartupCommon
 @end
@@ -140,7 +144,10 @@ static Class TestClass(const char *name) {
     if (UnsupportedClasses) return Nil;
     return strcmp(name, "CommonProduct") == 0 ? PCRStartupCommon.class : PCRStartupInherited.class;
 }
-static void TestInitCommon(void) { ++HookCalls; }
+static void TestInitCommon(void) {
+    ++HookCalls;
+    if (CaptureDuringHook) PCRCaptureProduct(HookProduct);
+}
 static void TestInitGP(void) { ++HookCalls; }
 #define objc_getClass TestClass
 #define NSNotificationCenter PCRStartupCenter
@@ -177,8 +184,10 @@ static void Reset(NSString *name) {
     ProcessName = name; MajorVersion = 16; LowPower = YES;
     FailName = NULL; FailKind = Registrations = CancelCalls = ModePosts = RequestPosts = PreferenceReads = HookCalls = 0;
     FailCancellation = MissingLPMObserver = UnsupportedClasses = NO;
+    CaptureDuringHook = NO; HookProduct = nil; PrivateCalls = 0; LastPrivateMode = nil;
     NextToken = 20; Clock = 0; LPMHandler = nil; PCRLPMObserver = nil;
     PCRQueue = nil; PCRProduct = nil; PCRLog = OS_LOG_DEFAULT;
+    PCRCommunicationReady = NO;
     PCRApplyFailed = PCRAwaitingReply = PCRRecoveryRequested = NO;
     PCRStateToken = PCRSettingsToken = PCRRequestToken = PCRUserSettingsToken = PCRRequestStateToken = -1;
     PCRLoadedToken = PCRHookToken = PCRAppliedToken = -1;
@@ -209,7 +218,7 @@ int main(void) {
         for (unsigned i = 0; i < 4; ++i) {
             Reset(@"SpringBoard"); FailName = publisherFailures[i]; FailKind = kinds[i];
             PCRTestInitialize(); Drain();
-            assert(ModePosts == 0 && RequestPosts == 0 && PreferenceReads == 0 && !LPMHandler);
+            assert(ModePosts == 0 && RequestPosts == 0 && PreferenceReads == 0 && !LPMHandler && PrivateCalls == 0);
             ReplayHandlers(); assert(ModePosts == 0 && RequestPosts == 0);
             AssertClosed(); assert(HookCalls == 0 && Tasks.count == 0);
         }
@@ -219,7 +228,7 @@ int main(void) {
         for (unsigned i = 0; i < 4; ++i) {
             Reset(@"thermalmonitord"); FailName = thermalFailures[i]; FailKind = i < 2 ? 2 : 1;
             PCRTestInitialize(); Drain(); ReplayHandlers();
-            AssertClosed(); assert(HookCalls == 0 && ModePosts == 0 && RequestPosts == 0);
+            AssertClosed(); assert(HookCalls == 0 && ModePosts == 0 && RequestPosts == 0 && PrivateCalls == 0);
         }
         puts("Startup: four daemon registration failures leave no hooks or communication PASS");
 
@@ -262,5 +271,13 @@ int main(void) {
                    PCRSettingsToken >= 0 && PCRUserSettingsToken >= 0);
         }
         puts("Startup: optional diagnostic failures do not replace mandatory readiness checks PASS");
+
+        Reset(@"thermalmonitord"); CaptureDuringHook = YES; HookProduct = [PCRStartupCommon new];
+        PCRTestInitialize(); Drain();
+        assert(HookCalls == 1 && PCRProduct == HookProduct && RequestPosts == 6 && PrivateCalls == 0);
+        States[@(PCRStateToken)] = @(PCREncodeMode(PCRSession, 0));
+        PCRApplyAttempt(0, ++PCRApplyGeneration); Drain();
+        assert(PrivateCalls == 1 && [LastPrivateMode isEqual:@"off"] && !PCRAwaitingReply);
+        puts("Startup: activation is queued before hook-time capture; fresh Off reaches the synthetic receiver PASS");
     }
 }

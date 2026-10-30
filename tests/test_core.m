@@ -149,12 +149,14 @@ static void Reset(void) {
     Respond = Deliver = YES; LowPower = NO;
     ForceRandom = NO; ForcedRandom = 0;
     PCRLog = OS_LOG_DEFAULT; PCRQueue = dispatch_get_main_queue(); PCRProduct = nil;
+    PCRCommunicationReady = YES;
     PCRApplyFailed = PCRAwaitingReply = PCRRecoveryRequested = NO;
     PCRStateToken = 1; PCRRequestStateToken = 2; PCRAppliedToken = 3;
     PCRHookToken = 4; PCRLoadedToken = 5; PCRSettingsToken = PCRRequestToken = PCRUserSettingsToken = -1;
     PCRSession = PCRLastPublishedSession = 0;
     PCRLastApplied = PCRLastPublished = -1;
     PCRRequestGeneration = PCRGeneration = PCRApplyGeneration = PCRRefreshGeneration = 0;
+    (void)PCRPrepareCommunication; (void)PCRActivateCommunication;
 }
 static uint64_t Status(void) { return [States[@(PCRAppliedToken)] unsignedLongLongValue]; }
 @interface TestProduct : NSObject

@@ -19,20 +19,20 @@ class ReleaseValidation(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.commit = 'a' * 40
-        for name, data in {'SOURCE_COMMIT': (self.commit + '\n').encode(), 'VERSION': b'1.3.9\n',
+        for name, data in {'SOURCE_COMMIT': (self.commit + '\n').encode(), 'VERSION': b'1.3.10\n',
                            'test.deb': b'fixture bytes, never installed'}.items():
             (self.root / name).write_bytes(data)
         manifest = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ./' + p.name + '\n'
                            for p in sorted(self.root.iterdir()))
         (self.root / 'SHA256SUMS').write_text(manifest)
-        self.release = dict(tag_name='v1.3.9', target_commitish=self.commit, draft=True, prerelease=False,
+        self.release = dict(tag_name='v1.3.10', target_commitish=self.commit, draft=True, prerelease=False,
                             assets=[dict(name=p.name, state='uploaded', size=p.stat().st_size,
                                          digest='sha256:' + hashlib.sha256(p.read_bytes()).hexdigest())
                                     for p in self.root.iterdir()])
 
     def verify(self, release=None, draft=True, prerelease=False):
         with contextlib.redirect_stdout(io.StringIO()):
-            verify_release(self.root, self.release if release is None else release, self.commit, 'v1.3.9', draft,
+            verify_release(self.root, self.release if release is None else release, self.commit, 'v1.3.10', draft,
                            prerelease=prerelease)
 
     def test_complete_draft_and_public_release(self):
@@ -91,7 +91,7 @@ class ReleaseValidation(unittest.TestCase):
         self.addCleanup(metadata.unlink, missing_ok=True)
         metadata.write_text('{}')
         result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'scripts/verify_release.py'),
-                                 str(self.root), str(metadata), '--commit', self.commit, '--tag', 'v1.3.9', '--draft'],
+                                 str(self.root), str(metadata), '--commit', self.commit, '--tag', 'v1.3.10', '--draft'],
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertIn('--prerelease --stable', result.stderr)

@@ -56,3 +56,27 @@ class SourcePackageValidation(unittest.TestCase):
             control_fields(b' unexpected continuation\n')
         with self.assertRaisesRegex(AssertionError, 'duplicate'):
             control_fields(b'Name: a\nName: b\n')
+
+    def test_boolean_values_cannot_replace_integer_profiles(self):
+        for fmt in (plistlib.FMT_XML, plistlib.FMT_BINARY):
+            for field in ('default', 'validValues'):
+                controls, files = self.fixtures()
+                name = next(n for n in files if n.endswith('/Powercuff.plist'))
+                panel = plistlib.loads(files[name][1])
+                mode = next(i for i in panel['items'] if i.get('key') == 'PowerMode')
+                if field == 'default': mode[field] = False
+                else: mode[field][1] = True
+                files[name] = (None, plistlib.dumps(panel, fmt=fmt))
+                with self.subTest(format=fmt, field=field), self.assertRaisesRegex(AssertionError, 'differs'):
+                    verify_source_contents(controls, files, ROOT)
+
+    def test_equal_numeric_values_do_not_erase_plist_types(self):
+        for fmt in (plistlib.FMT_XML, plistlib.FMT_BINARY):
+            for key, value in (('PowerMode', 0.0), ('RequireLowPowerMode', 0)):
+                controls, files = self.fixtures()
+                name = next(n for n in files if n.endswith('/Powercuff.plist'))
+                panel = plistlib.loads(files[name][1])
+                next(i for i in panel['items'] if i.get('key') == key)['default'] = value
+                files[name] = (None, plistlib.dumps(panel, fmt=fmt))
+                with self.subTest(format=fmt, key=key), self.assertRaisesRegex(AssertionError, 'differs'):
+                    verify_source_contents(controls, files, ROOT)

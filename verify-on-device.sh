@@ -32,7 +32,7 @@ for f in /Library/MobileSubstrate/DynamicLibraries/PowercuffBaldaranTrusted.dyli
     if [ -f "$p" ]; then echo "FOUND $p"; else echo "UNRESOLVED $f (check dpkg -L $DOMAIN)"; fi
  done
 if command -v defaults >/dev/null 2>&1; then
-    defaults read "$DOMAIN" 2>/dev/null || echo 'No readable domain: a new install defaults to Off.'
+    defaults read "$DOMAIN" 2>/dev/null || echo 'Preference domain missing or unreadable; effective mode is unknown. A new install defaults to Off.'
 fi
 if command -v notifyutil >/dev/null 2>&1; then
     for key in loaded.s loaded.t hook request thermals applied; do
@@ -44,7 +44,7 @@ else
 fi
 cat <<'HELP'
 loaded.*=1: loader ran at least once; hook=1: product initializer was observed.
-applied 0..4: private method returned; 10: waiting; 11: transport timeout/stale mode possible;
+applied 0..4: private method returned; 10: waiting/previous mode may remain; 11: transport timeout/stale mode possible;
 98: ObjC exception; 99: ABI mismatch. State 11 does not mean the previous profile was cleared.
 thermals contains a versioned 64-bit word with a daemon session; stale-session replies are rejected.
 Neither published nor applied state proves CPU throttling or battery improvement.

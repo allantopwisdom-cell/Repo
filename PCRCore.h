@@ -47,6 +47,15 @@ static void PCRDiagnostic(int token, uint64_t value) {
     if (token >= 0) notify_set_state(token, value);
 }
 
+// A cached reply can acknowledge only the request cycle that created it.
+// Renew on edits and recovery as well as product replacement. Keep randomness
+// bounded, and exclude zero/the immediately preceding session even on collision.
+static void PCRRenewSession(void) {
+    uint32_t next = arc4random();
+    if (!next || next == PCRSession) next = PCRSession == UINT32_MAX ? 1 : PCRSession + 1;
+    PCRSession = next;
+}
+
 static BOOL PCRObserve(const char *name, int *token, void (^block)(int)) {
     uint32_t status = notify_register_dispatch(name, token, PCRQueue, block);
     if (status == NOTIFY_STATUS_OK) return YES;
@@ -107,6 +116,8 @@ static void PCRApplyAttempt(unsigned attempt, NSUInteger generation) {
         if (!PCRRecoveryRequested) {
             PCRRecoveryRequested = YES;
             PCRAwaitingReply = YES;
+            ++PCRApplyGeneration;
+            PCRRenewSession();
             PCRRequestFresh(0, ++PCRRequestGeneration);
         }
     }
@@ -220,6 +231,8 @@ static void PCRRequestForSettingsChange(void) {
     ++PCRApplyGeneration;
     PCRRecoveryRequested = YES;
     PCRAwaitingReply = YES;
+    PCRDiagnostic(PCRAppliedToken, 10); // A previous mode is not an acknowledgement of this edit.
+    PCRRenewSession();
     PCRRequestFresh(0, ++PCRRequestGeneration);
 }
 
@@ -246,7 +259,7 @@ static void PCRCaptureProduct(id product) {
         }
         PCRAwaitingReply = YES;
         PCRDiagnostic(PCRAppliedToken, 10); // Waiting for a valid publisher state.
-        do { PCRSession = arc4random(); } while (!PCRSession);
+        PCRRenewSession();
         PCRRequestFresh(0, PCRRequestGeneration);
         // Do not apply notify's cached value: only a reply matching this session is accepted.
     });

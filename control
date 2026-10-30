@@ -1,6 +1,6 @@
 Package: com.minis.powercuff-baldaran-trusted
 Name: Powercuff
-Version: 1.3.8
+Version: 1.3.9
 Architecture: iphoneos-arm64e
 Priority: optional
 Section: Tweaks

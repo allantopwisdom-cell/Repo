@@ -1,5 +1,6 @@
 #import "PCRPreferences.h"
 #include <assert.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 int main(void) {
@@ -8,8 +9,14 @@ int main(void) {
             assert(PCRValidatedMode(@(i), nil, NO) == i);
             assert(PCRValidatedMode(@(i), @YES, YES) == i);
             assert(PCRValidatedMode(@(i), @YES, NO) == 0);
+            assert(PCRValidatedMode(@(i), @NO, NO) == i);
+            assert(PCRValidatedMode(@(i), @NO, YES) == i);
+            assert(PCRValidatedMode(@((double)i), @0, YES) == i);
+            assert(PCRValidatedMode(@(i), @1, NO) == 0);
+            assert(PCRValidatedMode(@(i), @1, YES) == i);
         }
-        for (id raw in @[@"3", @[], @{}, @YES, @(-1), @5, @2.5, @(NAN), @(INFINITY), NSNull.null])
+        for (id raw in @[@"3", @[], @{}, @YES, @NO, @(-1), @5, @2.5, @(NAN), @(INFINITY),
+                        @(-INFINITY), @(ULLONG_MAX), NSNull.null])
             assert(PCRValidatedMode(raw, nil, YES) == 0);
         for (id gate in @[@"1", @[], @{}, @2, @(-1), @0.5, @(NAN), NSNull.null])
             assert(PCRValidatedMode(@3, gate, YES) == 0);

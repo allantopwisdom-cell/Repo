@@ -50,8 +50,21 @@ class PayloadValidation(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, 'directory|permissions'):
                 tar_members(self.archive(('Library', tarfile.DIRTYPE, mode)))
 
+    def test_directory_allowlist_accepts_only_payload_ancestors(self):
+        allowed = {'Library/Reviewed/file'}
+        tar_members(self.archive(('.', tarfile.DIRTYPE, 0o755), ('Library', tarfile.DIRTYPE, 0o755),
+                                 ('Library/Reviewed', tarfile.DIRTYPE, 0o755),
+                                 ('Library/Reviewed/file', tarfile.REGTYPE, 0o644)), allowed)
+        for name in ('unreviewed', 'Library/Other', 'Library/Reviewed/extra', 'Library/Reviewed/file'):
+            with self.assertRaisesRegex(AssertionError, 'unexpected package directory'):
+                tar_members(self.archive((name, tarfile.DIRTYPE, 0o755)), allowed)
+
+    def test_control_archive_cannot_add_directories(self):
+        with self.assertRaisesRegex(AssertionError, 'unexpected package directory'):
+            tar_members(self.archive(('unexpected', tarfile.DIRTYPE, 0o755)), {'control', 'postinst'})
+
     def test_noncanonical_paths(self):
-        for name in ('Library//x', 'Library/./x', '././Library/x', '', '/x'):
+        for name in ('Library//x', 'Library/./x', '././Library/x', '', '/x', 'control/', 'Library/x/'):
             with self.assertRaisesRegex(AssertionError, 'path'):
                 tar_members(self.archive((name, tarfile.REGTYPE, 0o644)))
 

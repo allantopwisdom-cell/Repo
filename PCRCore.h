@@ -230,14 +230,24 @@ static void PCRCaptureProduct(id product) {
         if (!current || current == PCRProduct) return;
         PCRProduct = current; // All cache accesses confined to the daemon main queue.
         ++PCRApplyGeneration; // Invalidate reads queued for a previous product/session.
+        ++PCRRequestGeneration; // Cancel old IPC even if this receiver fails preflight.
         PCRLastApplied = -1;
         PCRApplyFailed = NO;
-        PCRAwaitingReply = YES;
+        PCRAwaitingReply = NO;
         PCRRecoveryRequested = NO;
         PCRDiagnostic(PCRHookToken, 1);
+        // The initializer may return a different/subclass receiver. Diagnose an
+        // unsupported ABI before IPC, including when the publisher is absent.
+        if (!PCRMethodMatches(object_getClass(current), @selector(putDeviceInThermalSimulationMode:), 'v')) {
+            PCRApplyFailed = YES;
+            PCRDiagnostic(PCRAppliedToken, 99);
+            os_log_error(PCRLog, "captured receiver has unsupported thermal API ABI; requests disabled");
+            return;
+        }
+        PCRAwaitingReply = YES;
         PCRDiagnostic(PCRAppliedToken, 10); // Waiting for a valid publisher state.
         do { PCRSession = arc4random(); } while (!PCRSession);
-        PCRRequestFresh(0, ++PCRRequestGeneration);
+        PCRRequestFresh(0, PCRRequestGeneration);
         // Do not apply notify's cached value: only a reply matching this session is accepted.
     });
 }

@@ -129,6 +129,7 @@ static void Drain(void) {
     while (Tasks.count) { assert(++steps < 1000); RunOne(); }
 }
 static void RunUntil(uint64_t deadline) {
+    assert(deadline >= Clock); // A virtual clock must never move backwards.
     unsigned steps = 0;
     while (Tasks.count) {
         uint64_t first = UINT64_MAX;
@@ -323,16 +324,17 @@ int main(void) {
         puts("Core: lost first LPM entry/exit delivery recovers with no repeated private call PASS");
 
         Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
+        uint64_t refreshStart = Clock;
         before = ModePosts; Preferences = @{@"PowerMode": @4}; PCRRefreshPreferences();
-        RunUntil(100 * NSEC_PER_MSEC);
+        RunUntil(refreshStart + 100 * NSEC_PER_MSEC);
         assert([product.mode isEqual:@"heavy"]);
         Preferences = @{@"PowerMode": @0}; PCRRefreshPreferences(); Drain();
         assert([product.mode isEqual:@"off"] && product.calls == 3 && Status() == 0);
-        assert(ModePosts - before == 4 && Clock == 700 * NSEC_PER_MSEC && Tasks.count == 0);
+        assert(ModePosts - before == 4 && Clock == refreshStart + 700 * NSEC_PER_MSEC && Tasks.count == 0);
         puts("Core: newer Off cancels earlier Heavy replays; finite refresh stops at 600ms PASS");
 
         Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
-        PCRRefreshPreferences(); RunUntil(300 * NSEC_PER_MSEC);
+        PCRRefreshPreferences(); RunUntil(Clock + 300 * NSEC_PER_MSEC);
         Preferences = @{@"PowerMode": @0}; Drain();
         assert([product.mode isEqual:@"off"] && product.calls == 2 && Status() == 0);
         puts("Core: delayed preference visibility is reread at the last refresh, not captured PASS");

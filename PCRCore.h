@@ -176,14 +176,16 @@ static void PCRScheduleStartupReplays(void) {
     }
 }
 
-// Settings notification delivery and cfprefsd visibility need not coincide.
-// Reread the current domain twice; never capture a stale mode in a delayed block.
+// Settings notification delivery, transport delivery and cfprefsd visibility
+// need not coincide. A successful post is not a daemon acknowledgement.
+// Reread AND republish during this finite window, even if the mode is unchanged.
+// Private API calls remain deduplicated by the daemon. No idle polling is added.
 static void PCRRefreshPreferences(void) {
     NSUInteger generation = ++PCRRefreshGeneration;
-    PCRPublish(NO);
+    PCRPublish(YES);
     for (NSNumber *delay in @[@0.15, @0.6]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), PCRQueue, ^{
-            if (generation == PCRRefreshGeneration) PCRPublish(NO);
+            if (generation == PCRRefreshGeneration) PCRPublish(YES);
         });
     }
 }

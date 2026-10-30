@@ -2,6 +2,12 @@
 
 用于 iOS 16 的系统热模拟档位插件，基于 [Baldaran/Powercuff-r3vamp](https://github.com/Baldaran/Powercuff-r3vamp) 改造。重点验证目标为 iPhone 14 Pro Max / iOS 16.5 / RootHide Dopamine 3.0.4。**尚未经该设备真机验证，不承诺无崩溃、固定 CPU 频率或确定的续航提升。**
 
+## 当前源码与正式安装包
+
+[v1.3.10 正式 Release](https://github.com/allantopwisdom-cell/Repo/releases/tag/v1.3.10) 对应提交 `93c65728bd6872500d3c6f5a74d3b2bd2b206418`。其中 DEB 的 SHA-256 为 `800caaeba29e2c3fd3fec39ce20bb99af0fd5b03b9844e5a20ea20b29f75ba83`。安装包及其源码、测试、审计证据应以该标签和附件为准。
+
+发行后的维护分支将同一运行时代码同步到默认源码入口，并升级固定提交的 checkout/upload-artifact 到 Node24，保持 ZIP 归档；setup-xcode 原固定提交已使用 Node24。发布任务固定使用 ubuntu-24.04，减少 ubuntu-latest 自动迁移造成的环境漂移。此维护不改变五档、默认值、LPM、注入范围或设备接口。普通分支/PR/主分支的验证产物仅用于核对当前提交；正式公开仍仅由指定 release 分支在全部门禁通过后执行，既有标签和附件不覆盖。Homebrew 的依赖扫描提示与 macOS runner 容量提示属于构建环境信息，不作为插件功能故障。
+
 ## 行为与边界
 
 - 只注入 SpringBoard 和 thermalmonitord；不注入 App、Widget 或 Settings。

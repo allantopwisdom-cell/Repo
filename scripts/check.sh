@@ -7,7 +7,8 @@ done
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 out=$(mktemp)
 prefout=$(mktemp)
-trap 'rm -f "$out" "$prefout"' EXIT
+startupdir=$(mktemp -d)
+trap 'rm -f "$out" "$prefout"; rm -rf "$startupdir"' EXIT
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_protocol.c -o "$out"
 "$out"
 python3 - <<'PY'
@@ -25,6 +26,9 @@ if [ "$(uname -s)" = Darwin ]; then
     clang -fobjc-arc -Wall -Wextra -Werror -I. -framework Foundation tests/test_runtime.m -o "$prefout"
     "$prefout"
     clang -fobjc-arc -Wall -Wextra -Werror -I. -framework Foundation -framework CoreFoundation tests/test_core.m -o "$prefout"
+    "$prefout"
+    python3 scripts/prepare_startup_test.py Powercuff.x "$startupdir/startup-ctor.h"
+    clang -fobjc-arc -Wall -Wextra -Werror -I. -I"$startupdir" -framework Foundation -framework CoreFoundation tests/test_startup.m -o "$prefout"
     "$prefout"
 else
     echo 'Foundation preference/runtime tests require macOS; executed by GitHub CI.'

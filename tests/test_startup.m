@@ -70,15 +70,15 @@ static void (^LPMHandler)(NSNotification *);
 @implementation PCRStartupInherited
 @end
 
-static void Enqueue(uint64_t time, dispatch_block_t block) {
+static void PCRStartupEnqueue(uint64_t time, dispatch_block_t block) {
     [Tasks addObject:@{@"time": @(time), @"block": [block copy]}];
 }
 static dispatch_time_t TestTime(dispatch_time_t when, int64_t delta) {
     assert(when == DISPATCH_TIME_NOW && delta >= 0); return Clock + (uint64_t)delta;
 }
-static void TestAsync(dispatch_queue_t queue, dispatch_block_t block) { (void)queue; Enqueue(Clock, block); }
+static void TestAsync(dispatch_queue_t queue, dispatch_block_t block) { (void)queue; PCRStartupEnqueue(Clock, block); }
 static void TestAfter(dispatch_time_t time, dispatch_queue_t queue, dispatch_block_t block) {
-    (void)queue; Enqueue(time, block);
+    (void)queue; PCRStartupEnqueue(time, block);
 }
 static uint32_t TestRegister(const char *name, int *token);
 static uint32_t TestObserve(const char *name, int *token, dispatch_queue_t queue, void (^block)(int));
@@ -112,7 +112,7 @@ static uint32_t TestObserve(const char *name, int *token, dispatch_queue_t queue
         int value = *token;
         [Handlers addObject:@{@"token": @(value), @"block": [block copy]}];
         // Emulate events already submitted to the queue while startup is incomplete.
-        Enqueue(Clock, ^{ block(value); });
+        PCRStartupEnqueue(Clock, ^{ block(value); });
     }
     return status;
 }

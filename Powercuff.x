@@ -47,6 +47,9 @@ static id PCRLPMObserver;
             if (!PCRObserve(PCRThermalsChanged, &PCRSettingsToken, ^(int token) {
                 (void)token; PCRApplyAttempt(0, ++PCRApplyGeneration);
             })) return;
+            if (!PCRObserve(PCRSettingsChanged, &PCRUserSettingsToken, ^(int token) {
+                (void)token; PCRRequestForSettingsChange();
+            })) return;
             Class common = objc_getClass("CommonProduct"), gp = objc_getClass("GPProduct");
             SEL init = @selector(initProduct:), apply = @selector(putDeviceInThermalSimulationMode:);
             BOOL commonOK = PCRMethodMatches(common, init, '@') && PCRMethodMatches(common, apply, 'v');
@@ -71,11 +74,7 @@ static id PCRLPMObserver;
                 usingBlock:^(NSNotification *note) {
                     (void)note; dispatch_async(PCRQueue, ^{ PCRRefreshPreferences(); });
                 }];
-            dispatch_async(PCRQueue, ^{ PCRPublish(YES); });
-            for (NSNumber *delay in @[@3, @10, @30, @60]) {
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
-                               PCRQueue, ^{ PCRPublish(YES); });
-            }
+            PCRScheduleStartupReplays();
         }
     }
 }

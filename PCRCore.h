@@ -21,6 +21,7 @@ static __weak id PCRProduct;
 static BOOL PCRApplyFailed;
 static BOOL PCRAwaitingReply, PCRRecoveryRequested;
 static int PCRStateToken = -1, PCRSettingsToken = -1, PCRRequestToken = -1;
+static int PCRUserSettingsToken = -1;
 static int PCRRequestStateToken = -1;
 static uint32_t PCRSession, PCRLastPublishedSession;
 static NSUInteger PCRRequestGeneration;
@@ -165,6 +166,16 @@ static void PCRPublish(BOOL force) {
     PCRPublishAttempt(force, 0, ++PCRGeneration);
 }
 
+static void PCRScheduleStartupReplays(void) {
+    dispatch_async(PCRQueue, ^{ PCRPublish(YES); });
+    // A successful post is not an acknowledgement from the daemon. Replay a
+    // finite number of times, reading current preferences on every attempt.
+    for (NSNumber *delay in @[@3, @10, @30, @60]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
+                       PCRQueue, ^{ PCRPublish(YES); });
+    }
+}
+
 // Settings notification delivery and cfprefsd visibility need not coincide.
 // Reread the current domain twice; never capture a stale mode in a delayed block.
 static void PCRRefreshPreferences(void) {
@@ -191,13 +202,23 @@ static void PCRRequestFresh(unsigned attempt, NSUInteger generation) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 400 * NSEC_PER_MSEC), PCRQueue, ^{
             if (generation == PCRRequestGeneration && PCRProduct && PCRAwaitingReply && !PCRApplyFailed) {
                 PCRDiagnostic(PCRAppliedToken, 11);
-                // Keep recovery latched until a VALID reply or new product arrives.
-                // Replies from our own recovery requests can enqueue delayed reads;
-                // clearing here lets those reads restart recovery without a bound.
+                // Keep the latch: read retries from the last invalid reply can
+                // outlive this timeout. They must not recursively start a cycle.
                 os_log_error(PCRLog, "session response timed out; no further periodic requests");
             }
         });
     }
+}
+
+// settingschanged comes from a preference edit, not from our own request/reply
+// transport. Only this explicit external event may rearm a failed recovery.
+// The daemon still never reads the mobile preference domain itself.
+static void PCRRequestForSettingsChange(void) {
+    if (!PCRProduct || PCRApplyFailed) return;
+    ++PCRApplyGeneration;
+    PCRRecoveryRequested = YES;
+    PCRAwaitingReply = YES;
+    PCRRequestFresh(0, ++PCRRequestGeneration);
 }
 
 static void PCRCaptureProduct(id product) {

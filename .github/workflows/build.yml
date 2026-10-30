@@ -71,6 +71,7 @@ jobs:
           PACKAGE=$(find packages -name '*.deb' -type f)
           cp SOURCE_TESTS.txt packages/SOURCE_TESTS.txt
           cp "BUILD-$VERSION.md" "RELEASE-$VERSION.md" "AUDIT-$VERSION.md" packages/
+          cp scripts/verify_release.py packages/verify_release.py
           printf '%s\n' "$VERSION" > packages/VERSION
           git rev-parse HEAD > packages/SOURCE_COMMIT
           git ls-files -z | xargs -0 shasum -a 256 > packages/SOURCE_FILES.sha256
@@ -91,7 +92,7 @@ jobs:
           retention-days: 90
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/release/powercuff-1.3.6'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/release/powercuff-1.3.7'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -107,7 +108,7 @@ jobs:
         run: |
           set -euo pipefail
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT_NAME" --dir packages
-          test "$(cat packages/VERSION)" = 1.3.6
+          test "$(cat packages/VERSION)" = 1.3.7
           test "$(cat packages/SOURCE_COMMIT)" = "$GITHUB_SHA"
           (cd packages && sha256sum -c SHA256SUMS)
       - name: Publish a new public test release
@@ -127,6 +128,15 @@ jobs:
           # alone does not prove a tag is absent or points to this build.
           gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA" > tag-created.json
           test "$(jq -r '.object.sha' tag-created.json)" = "$GITHUB_SHA"
-          gh release create "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --title "Powercuff v$VERSION — RootHide 公测修订版" --notes-file release-notes.md --prerelease --latest=false
+          # Keep the release private as a draft until EVERY attachment has been
+          # uploaded and matched against this exact successful build.
+          gh release create "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --title "Powercuff v$VERSION — RootHide 公测修订版" --notes-file release-notes.md --draft --prerelease --latest=false
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq --arg tag "$TAG" '[.[] | select(.tag_name == $tag)] | if length == 1 then .[0] else error("expected exactly one draft release") end' > release-created.json
+          RELEASE_ID=$(jq -er '.id | numbers' release-created.json)
+          python3 packages/verify_release.py packages release-created.json --commit "$GITHUB_SHA" --tag "$TAG" --draft
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq '.sha')" = "$GITHUB_SHA"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > release-published.json
+          python3 packages/verify_release.py packages release-published.json --commit "$GITHUB_SHA" --tag "$TAG" --public
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq '.sha')" = "$GITHUB_SHA"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,tagName,isDraft,isPrerelease,assets

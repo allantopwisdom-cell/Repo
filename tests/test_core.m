@@ -168,6 +168,16 @@ static uint64_t Status(void) { return [States[@(PCRAppliedToken)] unsignedLongLo
 }
 @end
 
+@interface TestBlockProduct : NSObject
+@property(nonatomic) NSUInteger calls;
+- (void)putDeviceInThermalSimulationMode:(dispatch_block_t)block;
+@end
+@implementation TestBlockProduct
+- (void)putDeviceInThermalSimulationMode:(dispatch_block_t)block {
+    (void)block; ++_calls;
+}
+@end
+
 int main(void) {
     @autoreleasepool {
         Reset();
@@ -267,6 +277,27 @@ int main(void) {
         PCRCaptureProduct(replacement); Drain();
         assert(replacement.calls == 1 && !PCRApplyFailed && Status() == 3);
         puts("Core: Objective-C exception is terminal for the object; replacement starts fresh PASS");
+
+        // ABI validation must not depend on an unrelated publisher replying.
+        Reset(); Respond = NO; NSObject *offlineUnsupported = [NSObject new];
+        PCRCaptureProduct(offlineUnsupported); Drain();
+        assert(PCRApplyFailed && Status() == 99 && RequestPosts == 0 && !PCRAwaitingReply);
+        before = RequestPosts; PCRRequestForSettingsChange(); Drain();
+        assert(RequestPosts == before && Status() == 99 && Tasks.count == 0);
+        puts("Core: unsupported receiver is rejected before IPC even without a publisher PASS");
+
+        Reset(); product = [TestProduct new]; Respond = NO;
+        PCRCaptureProduct(product); RunOne(); before = RequestPosts;
+        TestBlockProduct *blockProduct = [TestBlockProduct new];
+        PCRCaptureProduct(blockProduct); Drain();
+        assert(PCRApplyFailed && Status() == 99 && RequestPosts == before && !PCRAwaitingReply);
+        assert(product.calls == 0 && blockProduct.calls == 0 && Tasks.count == 0);
+        PCRPublish(YES); Drain();
+        assert(blockProduct.calls == 0 && Status() == 99);
+        Respond = YES; TestProduct *afterBadReceiver = [TestProduct new];
+        PCRCaptureProduct(afterBadReceiver); Drain();
+        assert(!PCRApplyFailed && afterBadReceiver.calls == 1 && Status() == 3);
+        puts("Core: block-ABI replacement cancels old requests; a valid replacement starts fresh PASS");
 
         Reset(); NSObject *unsupported = [NSObject new];
         PCRCaptureProduct(unsupported); Drain(); assert(PCRApplyFailed && Status() == 99);

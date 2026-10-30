@@ -70,7 +70,7 @@ jobs:
           test "$count" = 1
           PACKAGE=$(find packages -name '*.deb' -type f)
           cp SOURCE_TESTS.txt packages/SOURCE_TESTS.txt
-          cp "BUILD-$VERSION.md" "RELEASE-$VERSION.md" packages/
+          cp "BUILD-$VERSION.md" "RELEASE-$VERSION.md" "AUDIT-$VERSION.md" packages/
           printf '%s\n' "$VERSION" > packages/VERSION
           git rev-parse HEAD > packages/SOURCE_COMMIT
           git ls-files -z | xargs -0 shasum -a 256 > packages/SOURCE_FILES.sha256
@@ -123,5 +123,10 @@ jobs:
           printf '\n源码提交：`%s`。\n\n[GitHub Actions 构建](https://github.com/%s/actions/runs/%s)。\n\n附件 SHA-256：\n\n```text\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
           cat packages/SHA256SUMS >> release-notes.md
           printf '```\n' >> release-notes.md
-          gh release create "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Powercuff v$VERSION — RootHide 公测修订版" --notes-file release-notes.md --prerelease --latest=false
+          # Create the ref without overwriting any existing tag; release existence
+          # alone does not prove a tag is absent or points to this build.
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA" > tag-created.json
+          test "$(jq -r '.object.sha' tag-created.json)" = "$GITHUB_SHA"
+          gh release create "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --title "Powercuff v$VERSION — RootHide 公测修订版" --notes-file release-notes.md --prerelease --latest=false
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq '.sha')" = "$GITHUB_SHA"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,tagName,isDraft,isPrerelease,assets

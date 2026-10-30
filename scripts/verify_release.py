@@ -10,7 +10,7 @@ if not __debug__:
     raise RuntimeError('Release validation requires Python without -O')
 
 
-def verify_release(directory, release, commit, tag, draft):
+def verify_release(directory, release, commit, tag, draft, *, prerelease):
     root = Path(directory)
     files = {p.name: p for p in root.iterdir()}
     assert files and all(p.is_file() and not p.is_symlink() for p in files.values()), 'unexpected local asset type'
@@ -28,7 +28,7 @@ def verify_release(directory, release, commit, tag, draft):
     assert set(manifest) == set(files) - {'SHA256SUMS'}, 'attachment manifest coverage mismatch'
     assert all(digests[name] == digest for name, digest in manifest.items()), 'local attachment hash mismatch'
     assert release['tag_name'] == tag and release['target_commitish'] == commit, 'release source mismatch'
-    assert release['draft'] is draft and release['prerelease'] is True, 'unexpected release visibility/type'
+    assert release['draft'] is draft and release['prerelease'] is prerelease, 'unexpected release visibility/type'
     assets = release['assets']
     names = [asset['name'] for asset in assets]
     assert len(names) == len(set(names)) and set(names) == set(files), 'release attachment set mismatch'
@@ -49,5 +49,9 @@ if __name__ == '__main__':
     visibility = parser.add_mutually_exclusive_group(required=True)
     visibility.add_argument('--draft', action='store_true')
     visibility.add_argument('--public', action='store_true')
+    release_type = parser.add_mutually_exclusive_group(required=True)
+    release_type.add_argument('--prerelease', action='store_true')
+    release_type.add_argument('--stable', action='store_true')
     args = parser.parse_args()
-    verify_release(args.directory, json.loads(args.metadata.read_text()), args.commit, args.tag, args.draft)
+    verify_release(args.directory, json.loads(args.metadata.read_text()), args.commit, args.tag, args.draft,
+                   prerelease=args.prerelease)

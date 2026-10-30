@@ -1,26 +1,20 @@
 #!/bin/sh
-# Never modify mobile preferences from a root maintainer script.
+# Preserve mobile preferences. Command success is not proof of a successful reload.
 case "${1:-}" in
     configure)
+        need_fallback=1
         if command -v launchctl >/dev/null 2>&1; then
             if launchctl kickstart -k system/com.apple.thermalmonitord; then
+                need_fallback=0
                 echo 'Powercuff: launchctl accepted the thermal daemon restart request; successful reload is not confirmed.'
             else
                 status=$?
                 echo "Powercuff: launchctl kickstart failed (exit $status); attempting TERM fallback." >&2
-                if command -v killall >/dev/null 2>&1; then
-                    if killall -TERM thermalmonitord; then
-                        echo 'Powercuff: TERM sent to thermalmonitord; daemon restart and reload are not confirmed.' >&2
-                    else
-                        status=$?
-                        echo "Powercuff: TERM fallback failed (exit $status); daemon reload is not confirmed." >&2
-                    fi
-                else
-                    echo 'Powercuff: killall unavailable; daemon reload is not confirmed.' >&2
-                fi
             fi
         else
             echo 'Powercuff: launchctl unavailable; attempting TERM fallback.' >&2
+        fi
+        if [ "$need_fallback" = 1 ]; then
             if command -v killall >/dev/null 2>&1; then
                 if killall -TERM thermalmonitord; then
                     echo 'Powercuff: TERM sent to thermalmonitord; daemon restart and reload are not confirmed.' >&2

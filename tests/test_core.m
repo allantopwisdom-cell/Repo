@@ -128,6 +128,16 @@ static void Drain(void) {
     unsigned steps = 0;
     while (Tasks.count) { assert(++steps < 1000); RunOne(); }
 }
+static void RunUntil(uint64_t deadline) {
+    unsigned steps = 0;
+    while (Tasks.count) {
+        uint64_t first = UINT64_MAX;
+        for (NSDictionary *task in Tasks) first = MIN(first, [task[@"time"] unsignedLongLongValue]);
+        if (first > deadline) break;
+        assert(++steps < 1000); RunOne();
+    }
+    Clock = deadline;
+}
 static void Reset(void) {
     Tasks = [NSMutableArray new]; States = [NSMutableDictionary new];
     Preferences = @{@"PowerMode": @3}; Clock = 0;
@@ -137,7 +147,7 @@ static void Reset(void) {
     PCRLog = OS_LOG_DEFAULT; PCRQueue = dispatch_get_main_queue(); PCRProduct = nil;
     PCRApplyFailed = PCRAwaitingReply = PCRRecoveryRequested = NO;
     PCRStateToken = 1; PCRRequestStateToken = 2; PCRAppliedToken = 3;
-    PCRHookToken = 4; PCRLoadedToken = 5; PCRSettingsToken = PCRRequestToken = -1;
+    PCRHookToken = 4; PCRLoadedToken = 5; PCRSettingsToken = PCRRequestToken = PCRUserSettingsToken = -1;
     PCRSession = PCRLastPublishedSession = 0;
     PCRLastApplied = PCRLastPublished = -1;
     PCRRequestGeneration = PCRGeneration = PCRApplyGeneration = PCRRefreshGeneration = 0;
@@ -166,6 +176,7 @@ int main(void) {
         RegistrationStatus = 1;
         assert(!PCRRegister(PCRSettingsChanged, &token) && token == -1);
         assert(!PCRObserve(PCRSettingsChanged, &token, ^(int value) { (void)value; }) && token == -1);
+        PCRRequestForSettingsChange(); Drain(); assert(RequestPosts == 0);
         puts("Core: notification registration failures fail closed PASS");
 
         Reset(); TestProduct *product = [TestProduct new];
@@ -203,6 +214,8 @@ int main(void) {
         PCRApplyAttempt(0, ++PCRApplyGeneration); Drain();
         assert(Status() == 11 && product.calls == 1);
         assert(RequestPosts - before <= 6 && ReadCalls < 100 && Tasks.count == 0);
+        before = RequestPosts; PCRRequestForSettingsChange(); Drain();
+        assert(RequestPosts - before == 6 && Status() == 11 && Tasks.count == 0);
         ReadFailures = 0; Preferences = @{@"PowerMode": @0};
         PCRPublish(YES); Drain();
         assert(Status() == 0 && product.calls == 2 && [product.mode isEqual:@"off"]);
@@ -215,22 +228,28 @@ int main(void) {
         assert(product.calls == 1 && Status() == 3);
         puts("Core: missing publisher times out without polling; late valid reply recovers PASS");
 
-        // A failed recovery must not permanently suppress later event-driven recovery.
+        // Transport replies cannot rearm themselves after timeout. A preference
+        // edit is independently observed and can explicitly start a finite cycle.
         Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
         Respond = NO; States[@(PCRStateToken)] = @(0);
         before = RequestPosts; PCRApplyAttempt(0, ++PCRApplyGeneration); Drain();
-        assert(RequestPosts - before == 6 && Status() == 11 && !PCRRecoveryRequested);
+        assert(RequestPosts - before == 6 && Status() == 11 && PCRRecoveryRequested);
         Respond = YES; before = RequestPosts;
         PCRApplyAttempt(0, ++PCRApplyGeneration); Drain();
+        assert(RequestPosts == before && Status() == 11);
+        PCRRequestForSettingsChange(); Drain();
         assert(RequestPosts > before && Status() == 3 && product.calls == 1 && Tasks.count == 0);
-        puts("Core: timed-out recovery is rearmed by a later independent notification PASS");
+        puts("Core: invalid transport cannot rearm recovery; an explicit settings event recovers PASS");
 
-        // A successful post may still be lost; a forced startup replay must post again.
+        // Execute the actual startup schedule rather than invoking Publish by hand.
+        // Lost deliveries outlast the handshake, and preferences change before replay.
         Reset(); product = [TestProduct new]; Deliver = NO;
-        PCRCaptureProduct(product); Drain(); assert(product.calls == 0 && Status() == 11);
-        Deliver = YES; before = ModePosts; PCRPublish(YES); Drain();
-        assert(ModePosts == before + 1 && product.calls == 1 && Status() == 3);
-        puts("Core: forced replay recovers a lost mode delivery PASS");
+        PCRCaptureProduct(product); PCRScheduleStartupReplays();
+        RunUntil(2500 * NSEC_PER_MSEC); assert(product.calls == 0 && Status() == 11);
+        Deliver = YES; Preferences = @{@"PowerMode": @0}; before = ModePosts; Drain();
+        assert(ModePosts == before + 4 && product.calls == 1 && Status() == 0);
+        assert([product.mode isEqual:@"off"] && Clock == 60 * NSEC_PER_SEC && Tasks.count == 0);
+        puts("Core: four actual startup replays recover lost delivery using current Off, then stop PASS");
 
         Reset(); product = [TestProduct new]; Preferences = @{};
         PCRCaptureProduct(product); Drain();
@@ -241,6 +260,8 @@ int main(void) {
         PCRCaptureProduct(product); Drain();
         assert(product.calls == 1 && PCRApplyFailed && Status() == 98);
         PCRPublish(YES); Drain(); assert(product.calls == 1 && Status() == 98);
+        before = RequestPosts; PCRRequestForSettingsChange(); Drain();
+        assert(RequestPosts == before && product.calls == 1 && Status() == 98);
         TestProduct *replacement = [TestProduct new];
         PCRCaptureProduct(replacement); Drain();
         assert(replacement.calls == 1 && !PCRApplyFailed && Status() == 3);
@@ -248,6 +269,8 @@ int main(void) {
 
         Reset(); NSObject *unsupported = [NSObject new];
         PCRCaptureProduct(unsupported); Drain(); assert(PCRApplyFailed && Status() == 99);
+        before = RequestPosts; PCRRequestForSettingsChange(); Drain();
+        assert(RequestPosts == before && Status() == 99);
         puts("Core: unsupported product ABI is disabled before private dispatch PASS");
 
         Reset(); product = [TestProduct new]; replacement = [TestProduct new]; Respond = NO;

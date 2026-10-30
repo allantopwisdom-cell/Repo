@@ -17,6 +17,9 @@ static const char *const PCRRequest = "com.minis.powercuff-baldaran-trusted.requ
 static os_log_t PCRLog;
 // Private system objects use the daemon's main queue; thread affinity needs device validation.
 static dispatch_queue_t PCRQueue;
+// Written and read only on the role's serial queue. Registration callbacks can
+// arrive before constructor setup completes; they must not publish partial state.
+static BOOL PCRCommunicationReady;
 static __weak id PCRProduct;
 static BOOL PCRApplyFailed;
 static BOOL PCRAwaitingReply, PCRRecoveryRequested;
@@ -57,7 +60,9 @@ static void PCRRenewSession(void) {
 }
 
 static BOOL PCRObserve(const char *name, int *token, void (^block)(int)) {
-    uint32_t status = notify_register_dispatch(name, token, PCRQueue, block);
+    uint32_t status = notify_register_dispatch(name, token, PCRQueue, ^(int value) {
+        if (PCRCommunicationReady) block(value);
+    });
     if (status == NOTIFY_STATUS_OK) return YES;
     *token = -1;
     os_log_error(PCRLog, "notify observer failed: %{public}s status=%u", name, status);
@@ -102,7 +107,7 @@ static BOOL PCRApplyThermals(void) {
 }
 
 static void PCRApplyAttempt(unsigned attempt, NSUInteger generation) {
-    if (generation != PCRApplyGeneration) return;
+    if (!PCRCommunicationReady || generation != PCRApplyGeneration) return;
     if (PCRApplyThermals()) return;
     if (attempt < 5) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 400 * NSEC_PER_MSEC), PCRQueue, ^{
@@ -135,7 +140,7 @@ static BOOL PCRReadMode(NSInteger *mode) {
 
 static void PCRPublishAttempt(BOOL force, unsigned attempt, NSUInteger generation) {
     @autoreleasepool {
-        if (generation != PCRGeneration || PCRStateToken < 0) return;
+        if (!PCRCommunicationReady || generation != PCRGeneration || PCRStateToken < 0) return;
         uint64_t request = 0;
         uint32_t session = 0;
         BOOL haveSession = notify_get_state(PCRRequestStateToken, &request) == NOTIFY_STATUS_OK &&
@@ -178,6 +183,7 @@ static void PCRPublish(BOOL force) {
 }
 
 static void PCRScheduleStartupReplays(void) {
+    if (!PCRCommunicationReady) return;
     dispatch_async(PCRQueue, ^{ PCRPublish(YES); });
     // A successful post is not an acknowledgement from the daemon. Replay a
     // finite number of times, reading current preferences on every attempt.
@@ -192,6 +198,7 @@ static void PCRScheduleStartupReplays(void) {
 // Reread AND republish during this finite window, even if the mode is unchanged.
 // Private API calls remain deduplicated by the daemon. No idle polling is added.
 static void PCRRefreshPreferences(void) {
+    if (!PCRCommunicationReady) return;
     NSUInteger generation = ++PCRRefreshGeneration;
     PCRPublish(YES);
     for (NSNumber *delay in @[@0.15, @0.6]) {
@@ -202,7 +209,7 @@ static void PCRRefreshPreferences(void) {
 }
 
 static void PCRRequestFresh(unsigned attempt, NSUInteger generation) {
-    if (generation != PCRRequestGeneration || !PCRProduct || !PCRAwaitingReply || PCRApplyFailed) return;
+    if (!PCRCommunicationReady || generation != PCRRequestGeneration || !PCRProduct || !PCRAwaitingReply || PCRApplyFailed) return;
     if (notify_set_state(PCRRequestStateToken, PCREncodeRequest(PCRSession)) != NOTIFY_STATUS_OK ||
         notify_post(PCRRequest) != NOTIFY_STATUS_OK)
         os_log_error(PCRLog, "publisher request failed");
@@ -227,7 +234,7 @@ static void PCRRequestFresh(unsigned attempt, NSUInteger generation) {
 // transport. Only this explicit external event may rearm a failed recovery.
 // The daemon still never reads the mobile preference domain itself.
 static void PCRRequestForSettingsChange(void) {
-    if (!PCRProduct || PCRApplyFailed) return;
+    if (!PCRCommunicationReady || !PCRProduct || PCRApplyFailed) return;
     ++PCRApplyGeneration;
     PCRRecoveryRequested = YES;
     PCRAwaitingReply = YES;
@@ -239,6 +246,7 @@ static void PCRRequestForSettingsChange(void) {
 static void PCRCaptureProduct(id product) {
     __weak id candidate = product;
     dispatch_async(PCRQueue, ^{
+        if (!PCRCommunicationReady) return;
         id current = candidate;
         if (!current || current == PCRProduct) return;
         PCRProduct = current; // All cache accesses confined to the daemon main queue.
@@ -265,5 +273,57 @@ static void PCRCaptureProduct(id product) {
     });
 }
 
+
+// Used only before activation has been enqueued. Readiness remains false on the
+// role queue, including for callbacks already queued or cancellation failures.
+// Keep best-effort diagnostics registered so an ABI failure remains inspectable.
+static void PCRAbortCommunicationSetup(void) {
+    int *tokens[] = {&PCRSettingsToken, &PCRUserSettingsToken, &PCRRequestToken,
+                    &PCRStateToken, &PCRRequestStateToken};
+    for (unsigned i = 0; i < sizeof(tokens) / sizeof(tokens[0]); ++i) {
+        int token = *tokens[i];
+        *tokens[i] = -1;
+        if (token >= 0) {
+            uint32_t status = notify_cancel(token);
+            if (status != NOTIFY_STATUS_OK)
+                os_log_error(PCRLog, "notify cancellation failed: token=%d status=%u", token, status);
+        }
+    }
+}
+
+static BOOL PCRPrepareCommunication(BOOL isThermal) {
+    if (!PCRRegister(PCRThermalsChanged, &PCRStateToken) ||
+        !PCRRegister(PCRRequest, &PCRRequestStateToken)) {
+        PCRAbortCommunicationSetup();
+        return NO;
+    }
+    if (isThermal) {
+        PCRRegister("com.minis.powercuff-baldaran-trusted.hook", &PCRHookToken);
+        PCRRegister("com.minis.powercuff-baldaran-trusted.applied", &PCRAppliedToken);
+        PCRDiagnostic(PCRHookToken, 0);
+        PCRDiagnostic(PCRAppliedToken, 10);
+        if (PCRObserve(PCRThermalsChanged, &PCRSettingsToken, ^(int token) {
+            (void)token; PCRApplyAttempt(0, ++PCRApplyGeneration);
+        }) && PCRObserve(PCRSettingsChanged, &PCRUserSettingsToken, ^(int token) {
+            (void)token; PCRRequestForSettingsChange();
+        })) return YES;
+    } else {
+        if (PCRObserve(PCRSettingsChanged, &PCRSettingsToken, ^(int token) {
+            (void)token; PCRRefreshPreferences();
+        }) && PCRObserve(PCRRequest, &PCRRequestToken, ^(int token) {
+            (void)token; PCRPublish(YES);
+        })) return YES;
+    }
+    PCRAbortCommunicationSetup();
+    return NO;
+}
+
+static void PCRActivateCommunication(BOOL isThermal) {
+    dispatch_async(PCRQueue, ^{
+        if (PCRCommunicationReady) return;
+        PCRCommunicationReady = YES;
+        if (!isThermal) PCRScheduleStartupReplays();
+    });
+}
 
 #endif

@@ -19,6 +19,8 @@ static unsigned RegistrationStatus;
 static BOOL Respond, Deliver, LowPower;
 static int NextToken;
 static uint32_t NextSession = 100;
+static BOOL ForceRandom;
+static uint32_t ForcedRandom;
 
 @interface TestDefaults : NSUserDefaults
 @end
@@ -60,7 +62,7 @@ static uint32_t TestRegister(const char *name, int *token) {
 static uint32_t TestObserve(const char *name, int *token, dispatch_queue_t queue, void (^block)(int)) {
     (void)queue; (void)block; return TestRegister(name, token);
 }
-static uint32_t TestRandom(void) { return ++NextSession; }
+static uint32_t TestRandom(void) { return ForceRandom ? ForcedRandom : ++NextSession; }
 
 // Headers were imported above, so these adapters replace only calls in the actual core.
 #define NSUserDefaults TestDefaults
@@ -145,6 +147,7 @@ static void Reset(void) {
     ReadFailures = SetFailures = PostFailures = ReadCalls = RequestPosts = ModePosts = 0;
     RegistrationStatus = 0; NextToken = 20;
     Respond = Deliver = YES; LowPower = NO;
+    ForceRandom = NO; ForcedRandom = 0;
     PCRLog = OS_LOG_DEFAULT; PCRQueue = dispatch_get_main_queue(); PCRProduct = nil;
     PCRApplyFailed = PCRAwaitingReply = PCRRecoveryRequested = NO;
     PCRStateToken = 1; PCRRequestStateToken = 2; PCRAppliedToken = 3;
@@ -211,6 +214,67 @@ int main(void) {
         Respond = YES; PCRPublish(YES); Drain();
         assert(product.calls == 2 && [product.mode isEqual:@"off"] && Status() == 0);
         puts("Core: cached reply cannot acknowledge a new settings request; late fresh Off recovers PASS");
+
+        Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
+        Respond = NO; ReadFailures = 6; editRequests = RequestPosts;
+        uint64_t recoveryStart = Clock;
+        PCRApplyAttempt(0, ++PCRApplyGeneration);
+        RunUntil(recoveryStart + 2001 * NSEC_PER_MSEC);
+        assert(RequestPosts == editRequests + 1 && PCRRecoveryRequested);
+        PCRApplyAttempt(0, ++PCRApplyGeneration); Drain();
+        assert(RequestPosts == editRequests + 6 && Status() == 11 && PCRAwaitingReply);
+        assert(product.calls == 1 && Tasks.count == 0);
+        Respond = YES; Preferences = @{@"PowerMode": @0}; PCRPublish(YES); Drain();
+        assert(product.calls == 2 && [product.mode isEqual:@"off"] && Status() == 0);
+        puts("Core: cached reply cannot cancel a transport recovery cycle or hide its timeout PASS");
+
+        Reset(); product = [TestProduct new]; Preferences = @{@"PowerMode": @0};
+        PCRCaptureProduct(product); Drain(); Respond = NO;
+        Preferences = @{@"PowerMode": @4}; PCRRequestForSettingsChange();
+        uint32_t obsoleteHeavySession = PCRSession;
+        Preferences = @{@"PowerMode": @0}; PCRRequestForSettingsChange();
+        States[@(PCRStateToken)] = @(PCREncodeMode(obsoleteHeavySession, 4));
+        PCRApplyAttempt(0, ++PCRApplyGeneration); RunUntil(Clock + 100 * NSEC_PER_MSEC);
+        assert(product.calls == 1 && [product.mode isEqual:@"off"] && PCRAwaitingReply);
+        Respond = YES; PCRPublish(YES); Drain();
+        assert(product.calls == 1 && Status() == 0 && !PCRAwaitingReply && Tasks.count == 0);
+        puts("Core: a late Heavy reply from an earlier edit cannot override a newer Off edit PASS");
+
+        for (unsigned scenario = 0; scenario < 3; ++scenario) {
+            Reset(); product = [TestProduct new];
+            if (scenario == 2) { ForceRandom = YES; ForcedRandom = UINT32_MAX; }
+            PCRCaptureProduct(product); Drain(); Respond = NO;
+            uint32_t previousSession = PCRSession;
+            ForceRandom = YES; ForcedRandom = scenario == 0 ? 0 : previousSession;
+            PCRRequestForSettingsChange();
+            assert(PCRSession && PCRSession != previousSession);
+            Drain(); assert(Status() == 11 && RequestPosts == 7 && Tasks.count == 0);
+            Respond = YES; Preferences = @{@"PowerMode": @0}; PCRPublish(YES); Drain();
+            assert(Status() == 0 && [product.mode isEqual:@"off"]);
+        }
+        puts("Core: zero, repeated and UINT32_MAX session candidates remain fresh and bounded PASS");
+
+        NSArray<NSString *> *expectedNames = @[@"off", @"nominal", @"light", @"moderate", @"heavy"];
+        for (unsigned gate = 0; gate < 2; ++gate) for (unsigned lpm = 0; lpm < 2; ++lpm) {
+            Reset(); product = [TestProduct new]; LowPower = lpm;
+            Preferences = @{@"PowerMode": @0, @"RequireLowPowerMode": @(gate)};
+            PCRCaptureProduct(product); Drain(); NSUInteger expectedCalls = 1;
+            unsigned previousMode = 0;
+            for (unsigned mode = 0; mode <= 4; ++mode) {
+                Preferences = @{@"PowerMode": @(mode), @"RequireLowPowerMode": @(gate)};
+                PCRRequestForSettingsChange(); Drain();
+                unsigned effective = gate && !lpm ? 0 : mode;
+                if (effective != previousMode) ++expectedCalls;
+                assert(product.calls == expectedCalls && [product.mode isEqual:expectedNames[effective]]);
+                assert(Status() == effective && [Preferences[@"PowerMode"] unsignedIntValue] == mode);
+                PCRPublish(YES); Drain(); assert(product.calls == expectedCalls);
+                previousMode = effective;
+            }
+            Preferences = @{@"PowerMode": @0, @"RequireLowPowerMode": @(gate)};
+            PCRRequestForSettingsChange(); Drain();
+            assert(Status() == 0 && [product.mode isEqual:@"off"] && Tasks.count == 0);
+        }
+        puts("Core: all five profile strings, both LPM states and gates, dedup and Off restoration PASS");
 
         // A successful state write followed by a failed post is not a publication.
         // Returning to the previously delivered value must repair the shared state.

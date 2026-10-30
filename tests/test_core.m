@@ -297,6 +297,52 @@ int main(void) {
         LowPower = NO; PCRRefreshPreferences(); Drain(); assert([product.mode isEqual:@"off"]);
         puts("Core: rapid preference changes and LPM use current values, not stale delayed modes PASS");
 
+        // notify_post success is not delivery acknowledgement. After startup has
+        // ended, a lost first change must be repaired by the finite reread window.
+        Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
+        Clock = 120 * NSEC_PER_SEC; Deliver = NO; before = ModePosts;
+        Preferences = @{@"PowerMode": @0}; PCRRefreshPreferences();
+        RunUntil(Clock + 100 * NSEC_PER_MSEC);
+        assert(product.calls == 1 && [product.mode isEqual:@"moderate"]);
+        Deliver = YES; Drain();
+        assert(product.calls == 2 && [product.mode isEqual:@"off"] && Status() == 0);
+        assert(ModePosts - before == 3 && Tasks.count == 0);
+        puts("Core: lost first settings delivery recovers Off after startup without polling PASS");
+
+        Reset(); product = [TestProduct new]; LowPower = YES;
+        Preferences = @{@"PowerMode": @2, @"RequireLowPowerMode": @YES};
+        PCRCaptureProduct(product); Drain(); assert([product.mode isEqual:@"light"]);
+        for (unsigned transition = 0; transition < 2; ++transition) {
+            LowPower = transition == 1; Deliver = NO; before = ModePosts;
+            PCRRefreshPreferences(); RunUntil(Clock + 100 * NSEC_PER_MSEC);
+            Deliver = YES; Drain();
+            assert([product.mode isEqual:(LowPower ? @"light" : @"off")]);
+            assert(ModePosts - before == 3 && Tasks.count == 0);
+        }
+        assert(product.calls == 3);
+        puts("Core: lost first LPM entry/exit delivery recovers with no repeated private call PASS");
+
+        Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
+        before = ModePosts; Preferences = @{@"PowerMode": @4}; PCRRefreshPreferences();
+        RunUntil(100 * NSEC_PER_MSEC);
+        assert([product.mode isEqual:@"heavy"]);
+        Preferences = @{@"PowerMode": @0}; PCRRefreshPreferences(); Drain();
+        assert([product.mode isEqual:@"off"] && product.calls == 3 && Status() == 0);
+        assert(ModePosts - before == 4 && Clock == 700 * NSEC_PER_MSEC && Tasks.count == 0);
+        puts("Core: newer Off cancels earlier Heavy replays; finite refresh stops at 600ms PASS");
+
+        Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
+        PCRRefreshPreferences(); RunUntil(300 * NSEC_PER_MSEC);
+        Preferences = @{@"PowerMode": @0}; Drain();
+        assert([product.mode isEqual:@"off"] && product.calls == 2 && Status() == 0);
+        puts("Core: delayed preference visibility is reread at the last refresh, not captured PASS");
+
+        Reset(); product = [TestProduct new]; product.fail = YES;
+        PCRCaptureProduct(product); Drain();
+        Preferences = @{@"PowerMode": @0}; PCRRefreshPreferences(); Drain();
+        assert(product.calls == 1 && PCRApplyFailed && Status() == 98 && Tasks.count == 0);
+        puts("Core: finite refresh replays cannot bypass the private API exception fuse PASS");
+
         Reset(); product = [TestProduct new]; SetFailures = 2; PostFailures = 2;
         PCRCaptureProduct(product); Drain();
         assert(product.calls == 1 && Status() == 3 && RequestPosts <= 6);

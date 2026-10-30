@@ -94,6 +94,7 @@ import io
 import gzip
 import lzma
 from pathlib import Path
+import plistlib
 import tarfile
 import tempfile
 from verify_package import control_fields, verify
@@ -126,6 +127,15 @@ def mutate_tar(blob, scenario, archive_name):
                 item.name += '/'; changed = True
             elif scenario == 'unreviewed-dependency' and item.name.removeprefix('./') == 'control':
                 payload = payload.replace(b'preferenceloader', b'unreviewed-dependency'); changed = True
+            elif scenario in ('boolean-profile', 'duplicate-plist-key') and item.name.endswith('/Powercuff.plist'):
+                panel = plistlib.loads(payload)
+                if scenario == 'boolean-profile':
+                    next(i for i in panel['items'] if i.get('key') == 'PowerMode')['validValues'][1] = True
+                    payload = plistlib.dumps(panel, fmt=plistlib.FMT_BINARY)
+                else:
+                    payload = plistlib.dumps(panel, fmt=plistlib.FMT_XML).replace(
+                        b'<dict>', b'<dict><key>entry</key><dict/>', 1)
+                changed = True
             if payload is not None: item.size = len(payload)
             target.addfile(item, io.BytesIO(payload) if payload is not None else None)
         if scenario in ('extra-control-directory', 'extra-data-directory'):
@@ -140,7 +150,7 @@ def mutate_tar(blob, scenario, archive_name):
 with tempfile.TemporaryDirectory() as directory:
     for scenario in ('unreviewed-script', 'changed-icon', 'unreadable-dylib', 'legacy-arm64e-abi', 'unreviewed-dependency',
                      'reordered-members', 'compression-name-mismatch', 'extra-control-directory', 'extra-data-directory',
-                     'trailing-file-slash'):
+                     'trailing-file-slash', 'boolean-profile', 'duplicate-plist-key'):
         damaged = dict(members)
         if scenario == 'reordered-members':
             damaged = dict(reversed(list(damaged.items())))
@@ -170,8 +180,18 @@ with tempfile.TemporaryDirectory() as directory:
                                'compression-name-mismatch': 'compression does not match',
                                'extra-control-directory': 'unexpected package directory',
                                'extra-data-directory': 'unexpected package directory',
-                               'trailing-file-slash': 'noncanonical package file path'}[scenario]
+                               'trailing-file-slash': 'noncanonical package file path',
+                               'boolean-profile': 'plist differs from source',
+                               'duplicate-plist-key': 'duplicate plist dictionary key'}[scenario]
             assert expected_reason in str(error), f'{scenario} failed for an unrelated reason: {error}'
         else:
             raise AssertionError(f'actual DEB mutation {scenario} was accepted')
         print(f'Actual built DEB: {scenario} rejected PASS')
+        if scenario == 'boolean-profile':
+            try:
+                with contextlib.redirect_stdout(io.StringIO()): verify(path, version)
+            except AssertionError as error:
+                assert 'profile values/types differ' in str(error), str(error)
+            else:
+                raise AssertionError('boolean profile bypassed standalone schema verification')
+            print('Actual built DEB: boolean profile rejected without a source checkout PASS')

@@ -21,6 +21,30 @@ PAYLOAD_FILES = {LIBRARY + '.dylib', LIBRARY + '.plist'} | {PANEL_PATH + name fo
                  ('Powercuff.plist', 'icon.png', 'Powercuff@2x.png', 'Powercuff@3x.png')}
 
 
+class UniquePlistDictionary(dict):
+    """Reject ambiguous dictionaries before a parser can discard a duplicate."""
+    def __setitem__(self, key, value):
+        assert type(key) is str, 'plist dictionary keys must be strings'
+        assert key not in self, 'duplicate plist dictionary key'
+        super().__setitem__(key, value)
+
+
+def load_plist(contents):
+    return plistlib.loads(contents, dict_type=UniquePlistDictionary)
+
+
+def plist_equal(actual, expected):
+    # Python bool/int/float equality erases distinctions that matter to Settings
+    # and PCRValidatedMode. Accept XML/binary encodings, preserving plist types.
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and actual.keys() == expected.keys() and all(
+            plist_equal(actual[key], value) for key, value in expected.items())
+    if isinstance(expected, list):
+        return type(actual) is list and len(actual) == len(expected) and all(
+            plist_equal(a, b) for a, b in zip(actual, expected))
+    return type(actual) is type(expected) and actual == expected
+
+
 def ar_members(path):
     data = Path(path).read_bytes()
     assert data[:8] == b'!<arch>\n', 'not a Debian ar archive'
@@ -116,7 +140,7 @@ def verify_source_contents(controls, files, source_root):
         source = root / ('PowercuffBaldaranTrusted.plist' if name.endswith('/PowercuffBaldaranTrusted.plist') else 'layout/' + name)
         expected = source.read_bytes()
         if name.endswith('.plist'):
-            assert plistlib.loads(contents) == plistlib.loads(expected), f'{name} plist differs from source'
+            assert plist_equal(load_plist(contents), load_plist(expected)), f'{name} plist differs from source'
         else:
             assert contents == expected, f'{name} differs from source'
 
@@ -185,12 +209,15 @@ def verify(path, expected_version, source_root=None):
     assert offset == 32 + cmdsize, 'load command size mismatch'
     verify_signature(binary, *signature_range)
     assert install_id == '@loader_path/.jbroot/' + lib + '.dylib', f'non-RootHide install id: {install_id}'
-    injection = plistlib.loads(files[lib + '.plist'][1])
-    assert injection == {'Filter': {'Executables': ['SpringBoard', 'thermalmonitord']}}
-    panel = plistlib.loads(files['Library/PreferenceLoader/Preferences/PowercuffBaldaranTrusted/Powercuff.plist'][1])
-    preferences = {item['key']: item for item in panel['items'] if 'key' in item}
-    assert preferences['PowerMode']['validValues'] == list(range(5))
-    assert preferences['PowerMode']['default'] == 0
+    injection = load_plist(files[lib + '.plist'][1])
+    assert plist_equal(injection, {'Filter': {'Executables': ['SpringBoard', 'thermalmonitord']}})
+    panel = load_plist(files['Library/PreferenceLoader/Preferences/PowercuffBaldaranTrusted/Powercuff.plist'][1])
+    keyed_items = [item for item in panel['items'] if 'key' in item]
+    preferences = {item['key']: item for item in keyed_items}
+    assert len(keyed_items) == 2 and set(preferences) == {'PowerMode', 'RequireLowPowerMode'}, 'unexpected/duplicate preference keys'
+    assert plist_equal(preferences['PowerMode']['validValues'], list(range(5))), 'profile values/types differ'
+    assert plist_equal(preferences['PowerMode']['validTitles'], ['关闭', '标称（仍在模拟）', '轻度', '中度', '重度']), 'profile titles differ'
+    assert plist_equal(preferences['PowerMode']['default'], 0), 'profile default/type differs'
     assert preferences['RequireLowPowerMode']['default'] is False
     for pref in preferences.values():
         assert pref['defaults'] == fields['Package']

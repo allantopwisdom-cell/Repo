@@ -198,6 +198,20 @@ int main(void) {
         assert(product.calls == 1);
         puts("Core: handshake, session response and same-mode private-call dedup PASS");
 
+        // A delayed duplicate of the last reply must not acknowledge a new edit.
+        // The publisher is now unavailable, so the full finite request budget
+        // must expire visibly instead of accepting the cached Moderate value.
+        Reset(); product = [TestProduct new]; PCRCaptureProduct(product); Drain();
+        Respond = NO; Preferences = @{@"PowerMode": @0};
+        unsigned editRequests = RequestPosts;
+        PCRRequestForSettingsChange();
+        PCRApplyAttempt(0, ++PCRApplyGeneration); Drain();
+        assert(RequestPosts - editRequests == 6 && PCRAwaitingReply && Status() == 11);
+        assert(product.calls == 1 && [product.mode isEqual:@"moderate"] && Tasks.count == 0);
+        Respond = YES; PCRPublish(YES); Drain();
+        assert(product.calls == 2 && [product.mode isEqual:@"off"] && Status() == 0);
+        puts("Core: cached reply cannot acknowledge a new settings request; late fresh Off recovers PASS");
+
         // A successful state write followed by a failed post is not a publication.
         // Returning to the previously delivered value must repair the shared state.
         Reset(); product = [TestProduct new]; Preferences = @{@"PowerMode": @0};

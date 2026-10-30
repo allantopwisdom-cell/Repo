@@ -20,7 +20,7 @@ elif name == 'defaults':
 elif name == 'notifyutil':
  assert args[0] == '-g'; print(args[1], '0')
 elif name == 'dpkg-query':
- assert args[0] == '-W'; print('Installed package: 1.3.7 iphoneos-arm64e')
+ assert args[0] == '-W'; print('Installed package: 1.3.8 iphoneos-arm64e')
 else: raise AssertionError('unexpected command')
 '''
 
@@ -61,7 +61,7 @@ class CurrentDiagnostics(unittest.TestCase):
         result, calls = self.run_helper()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('not proof of liveness', result.stdout)
-        self.assertIn('Installed package: 1.3.7', result.stdout)
+        self.assertIn('Installed package: 1.3.8', result.stdout)
         self.assertIn('--- request ---', result.stdout)
         self.assertIn('State 11 does not mean', result.stdout)
         for name, args in calls:

@@ -18,20 +18,20 @@ class ReleaseValidation(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.commit = 'a' * 40
-        for name, data in {'SOURCE_COMMIT': (self.commit + '\n').encode(), 'VERSION': b'1.3.7\n',
+        for name, data in {'SOURCE_COMMIT': (self.commit + '\n').encode(), 'VERSION': b'1.3.8\n',
                            'test.deb': b'fixture bytes, never installed'}.items():
             (self.root / name).write_bytes(data)
         manifest = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ./' + p.name + '\n'
                            for p in sorted(self.root.iterdir()))
         (self.root / 'SHA256SUMS').write_text(manifest)
-        self.release = dict(tag_name='v1.3.7', target_commitish=self.commit, draft=True, prerelease=True,
+        self.release = dict(tag_name='v1.3.8', target_commitish=self.commit, draft=True, prerelease=True,
                             assets=[dict(name=p.name, state='uploaded', size=p.stat().st_size,
                                          digest='sha256:' + hashlib.sha256(p.read_bytes()).hexdigest())
                                     for p in self.root.iterdir()])
 
     def verify(self, release=None, draft=True):
         with contextlib.redirect_stdout(io.StringIO()):
-            verify_release(self.root, self.release if release is None else release, self.commit, 'v1.3.7', draft)
+            verify_release(self.root, self.release if release is None else release, self.commit, 'v1.3.8', draft)
 
     def test_complete_draft_and_public_release(self):
         self.verify()

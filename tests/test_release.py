@@ -19,20 +19,25 @@ class ReleaseValidation(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.commit = 'a' * 40
-        for name, data in {'SOURCE_COMMIT': (self.commit + '\n').encode(), 'VERSION': b'1.3.10\n',
-                           'test.deb': b'fixture bytes, never installed'}.items():
+        self.debname = 'com.minis.powercuff-baldaran-trusted_1.3.11_iphoneos-arm64e.deb'
+        values = {name: b'fixture bytes, never installed' for name in
+                  (self.debname, 'AUDIT-1.3.11.md', 'BUILD-1.3.11.md', 'RELEASE-1.3.11.md',
+                   'SOURCE_FILES.sha256', 'SOURCE_TESTS.txt', 'TOOLCHAIN_REFS',
+                   'BUILD_ENVIRONMENT.txt', 'verification.txt', 'verify_release.py')}
+        values.update({'SOURCE_COMMIT': (self.commit + '\n').encode(), 'VERSION': b'1.3.11\n'})
+        for name, data in values.items():
             (self.root / name).write_bytes(data)
         manifest = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ./' + p.name + '\n'
                            for p in sorted(self.root.iterdir()))
         (self.root / 'SHA256SUMS').write_text(manifest)
-        self.release = dict(tag_name='v1.3.10', target_commitish=self.commit, draft=True, prerelease=False,
+        self.release = dict(tag_name='v1.3.11', target_commitish=self.commit, draft=True, prerelease=False,
                             assets=[dict(name=p.name, state='uploaded', size=p.stat().st_size,
                                          digest='sha256:' + hashlib.sha256(p.read_bytes()).hexdigest())
                                     for p in self.root.iterdir()])
 
     def verify(self, release=None, draft=True, prerelease=False):
         with contextlib.redirect_stdout(io.StringIO()):
-            verify_release(self.root, self.release if release is None else release, self.commit, 'v1.3.10', draft,
+            verify_release(self.root, self.release if release is None else release, self.commit, 'v1.3.11', draft,
                            prerelease=prerelease)
 
     def test_complete_draft_and_public_release(self):
@@ -71,7 +76,7 @@ class ReleaseValidation(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'manifest coverage'): self.verify()
 
     def test_local_tampering_cannot_be_hidden_by_remote_metadata(self):
-        (self.root / 'test.deb').write_bytes(b'changed after build')
+        (self.root / self.debname).write_bytes(b'changed after build')
         with self.assertRaisesRegex(AssertionError, 'local attachment hash'): self.verify()
 
 
@@ -86,12 +91,35 @@ class ReleaseValidation(unittest.TestCase):
             self.verify(draft=False, prerelease=True)
         self.verify(draft=False)
 
+    def coherent_metadata(self):
+        manifest = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ./' + p.name + '\n'
+                           for p in sorted(self.root.iterdir()) if p.name != 'SHA256SUMS')
+        (self.root / 'SHA256SUMS').write_text(manifest)
+        self.release['assets'] = [dict(name=p.name, state='uploaded', size=p.stat().st_size,
+                                      digest='sha256:' + hashlib.sha256(p.read_bytes()).hexdigest())
+                                  for p in self.root.iterdir()]
+
+    def test_coherent_local_and_remote_subset_cannot_omit_required_evidence(self):
+        for name in (self.debname, 'SOURCE_TESTS.txt', 'verify_release.py', 'AUDIT-1.3.11.md'):
+            with self.subTest(name=name):
+                path = self.root / name
+                original = path.read_bytes(); path.unlink(); self.coherent_metadata()
+                with self.assertRaisesRegex(AssertionError, 'required release asset'):
+                    self.verify()
+                path.write_bytes(original); self.coherent_metadata()
+
+    def test_coherent_extra_attachment_cannot_expand_the_release_contract(self):
+        (self.root / 'unreviewed.deb').write_bytes(b'fixture, never installed')
+        self.coherent_metadata()
+        with self.assertRaisesRegex(AssertionError, 'required release asset'):
+            self.verify()
+
     def test_cli_requires_an_explicit_release_type(self):
         metadata = self.root.parent / (self.root.name + '-metadata.json')
         self.addCleanup(metadata.unlink, missing_ok=True)
         metadata.write_text('{}')
         result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'scripts/verify_release.py'),
-                                 str(self.root), str(metadata), '--commit', self.commit, '--tag', 'v1.3.10', '--draft'],
+                                 str(self.root), str(metadata), '--commit', self.commit, '--tag', 'v1.3.11', '--draft'],
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertIn('--prerelease --stable', result.stderr)

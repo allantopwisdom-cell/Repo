@@ -460,5 +460,35 @@ int main(void) {
         PCRCaptureProduct(product); Drain();
         assert(product.calls == 1 && Status() == 3 && RequestPosts <= 6);
         puts("Core: transient set/post failures recover within the request budget PASS");
+
+        // A permanent publisher failure must finish its budget. A later Off
+        // edit must repair even a shared Heavy word whose post never succeeded.
+        for (unsigned fault = 0; fault < 2; ++fault) {
+            Reset(); product = [TestProduct new]; Preferences = @{@"PowerMode": @0};
+            PCRCaptureProduct(product); Drain(); uint64_t failureStart = Clock;
+            if (fault) PostFailures = 10000; else SetFailures = 10000;
+            before = ModePosts; Preferences = @{@"PowerMode": @4}; PCRPublish(YES); Drain();
+            assert(Clock == failureStart + 2000 * NSEC_PER_MSEC && Tasks.count == 0);
+            assert(product.calls == 1 && [product.mode isEqual:@"off"] && ModePosts == before);
+            assert(PCRLastPublished == -1 && PCRLastPublishedSession == 0);
+            SetFailures = PostFailures = 0; Preferences = @{@"PowerMode": @0}; PCRPublish(NO); Drain();
+            unsigned currentMode = 99;
+            assert(PCRDecodeMode([States[@(PCRStateToken)] unsignedLongLongValue], PCRSession, &currentMode));
+            assert(currentMode == 0 && product.calls == 1 && Status() == 0 && Tasks.count == 0);
+        }
+        puts("Core: permanent publisher set/post failures stop; later Off repairs shared state PASS");
+
+        Reset(); Respond = NO; __weak TestProduct *discarded;
+        @autoreleasepool {
+            TestProduct *pending = [TestProduct new]; discarded = pending;
+            PCRCaptureProduct(pending); RunOne(); assert(RequestPosts == 1);
+            pending = nil;
+        }
+        assert(!discarded && !PCRProduct); Drain();
+        assert(RequestPosts == 1 && Tasks.count == 0);
+        Respond = YES; Preferences = @{@"PowerMode": @0};
+        replacement = [TestProduct new]; PCRCaptureProduct(replacement); Drain();
+        assert(replacement.calls == 1 && Status() == 0 && !PCRAwaitingReply && Tasks.count == 0);
+        puts("Core: product released during handshake stops requests; replacement obtains fresh Off PASS");
     }
 }

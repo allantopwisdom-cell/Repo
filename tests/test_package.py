@@ -1,16 +1,17 @@
 import io
+import gzip
 from pathlib import Path
 import subprocess
 import sys
 import tarfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from verify_package import package_archives, tar_members
+from verify_package import decompress_tar, package_archives, tar_members
 
 class PayloadValidation(unittest.TestCase):
     def archive(self, *items):
         out = io.BytesIO()
-        with tarfile.open(fileobj=out, mode='w:gz') as archive:
+        with tarfile.open(fileobj=out, mode='w') as archive:
             for name, kind, mode in items:
                 item = tarfile.TarInfo(name)
                 item.uid, item.mode, item.type = 0, mode, kind
@@ -23,7 +24,8 @@ class PayloadValidation(unittest.TestCase):
 
     def test_debian_member_order(self):
         import itertools
-        members = {'debian-binary': b'2.0\n', 'control.tar.gz': self.archive(), 'data.tar.gz': self.archive()}
+        members = {'debian-binary': b'2.0\n', 'control.tar.gz': gzip.compress(self.archive()),
+                   'data.tar.gz': gzip.compress(self.archive())}
         package_archives(members)
         for order in itertools.permutations(members):
             if list(order) != list(members):
@@ -33,16 +35,79 @@ class PayloadValidation(unittest.TestCase):
     def test_compression_suffix_matches_bytes(self):
         import gzip
         import lzma
-        raw = gzip.decompress(self.archive())
+        raw = self.archive()
         for suffix, blob in [('gz', gzip.compress(raw)), ('xz', lzma.compress(raw)),
                              ('lzma', lzma.compress(raw, format=lzma.FORMAT_ALONE))]:
-            members = {'debian-binary': b'2.0\n', 'control.tar.gz': self.archive(), 'data.tar.' + suffix: blob}
+            members = {'debian-binary': b'2.0\n', 'control.tar.gz': gzip.compress(self.archive()), 'data.tar.' + suffix: blob}
             package_archives(members)
         members['data.tar.lzma'] = gzip.compress(raw)
         with self.assertRaisesRegex(AssertionError, 'compression'):
             package_archives(members)
         with self.assertRaisesRegex(AssertionError, 'suffix'):
-            package_archives({'debian-binary': b'2.0\n', 'control.tar.bogus': self.archive(), 'data.tar.gz': self.archive()})
+            package_archives({'debian-binary': b'2.0\n', 'control.tar.bogus': self.archive(),
+                              'data.tar.gz': gzip.compress(self.archive())})
+
+    def test_nested_compression_is_not_a_tar_layer(self):
+        import gzip
+        import lzma
+        raw = self.archive(('valid', tarfile.REGTYPE, 0o644))
+        compressors = {'gz': gzip.compress, 'xz': lzma.compress,
+                       'lzma': lambda b: lzma.compress(b, format=lzma.FORMAT_ALONE)}
+        for outer, compress in compressors.items():
+            for inner in (gzip.compress, lzma.compress):
+                for role in ('control', 'data'):
+                    members = {'debian-binary': b'2.0\n', 'control.tar.gz': gzip.compress(self.archive()),
+                               'data.tar.gz': gzip.compress(self.archive())}
+                    members = {(role + '.tar.' + outer if name.startswith(role + '.tar.') else name):
+                               (compress(inner(raw)) if name.startswith(role + '.tar.') else blob)
+                               for name, blob in members.items()}
+                    with self.subTest(outer=outer, inner=inner.__module__, role=role):
+                        with self.assertRaisesRegex(AssertionError, 'uncompressed tar'):
+                            package_archives(members)
+
+    def test_tar_end_markers_and_full_trailer_coverage(self):
+        import gzip
+        raw = self.archive(('valid', tarfile.REGTYPE, 0o644))
+        # One header, empty payload, then at least two complete zero blocks.
+        for valid in (raw, raw[:512] + bytes(1024), raw + bytes(512)):
+            with self.subTest(valid_size=len(valid)):
+                tar_members(valid)
+        for invalid in (raw[:512], raw[:1024], raw[:-1], raw + b'UNREVIEWED',
+                        raw + b'X' + bytes(511), raw + raw):
+            with self.subTest(invalid_size=len(invalid)):
+                with self.assertRaisesRegex(AssertionError, 'uncompressed tar'):
+                    tar_members(invalid)
+
+    def test_valid_tar_formats_and_payload_padding(self):
+        for fmt in (tarfile.USTAR_FORMAT, tarfile.GNU_FORMAT, tarfile.PAX_FORMAT):
+            for size in (1, 511, 512, 513):
+                out = io.BytesIO(); payload = b'P' * size
+                name = 'payload' if fmt == tarfile.USTAR_FORMAT else 'long/' * 40 + 'payload'
+                with tarfile.open(fileobj=out, mode='w', format=fmt) as archive:
+                    item = tarfile.TarInfo(name); item.size = size; item.mode = 0o644
+                    archive.addfile(item, io.BytesIO(payload))
+                with self.subTest(format=fmt, size=size):
+                    self.assertEqual(tar_members(out.getvalue())[name][1], payload)
+
+    def test_normalization_cannot_silently_repair_invalid_layers(self):
+        import gzip
+        import tempfile
+        from normalize_package import normalize
+        raw = self.archive(('valid', tarfile.REGTYPE, 0o644))
+        for invalid in (gzip.compress(raw), raw + b'X' + bytes(511)):
+            blob = gzip.compress(invalid)
+            header = f'{"data.tar.gz/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{len(blob):<10}`\n'.encode()
+            original = b'!<arch>\n' + header + blob + (b'\n' if len(blob) & 1 else b'')
+            # ar_members also requires a debian-binary member.
+            binary = f'{"debian-binary/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{4:<10}`\n'.encode() + b'2.0\n'
+            original = original[:8] + binary + original[8:]
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'negative.deb'
+                path.write_bytes(original)
+                with self.assertRaisesRegex(AssertionError, 'uncompressed tar'):
+                    normalize(path, 12345)
+                self.assertEqual(path.read_bytes(), original)
+                self.assertFalse(path.with_suffix('.deb.normalized').exists())
 
     def test_directories_must_be_traversable(self):
         tar_members(self.archive(('.', tarfile.DIRTYPE, 0o755), ('Library', tarfile.DIRTYPE, 0o755)))
@@ -99,7 +164,7 @@ class PayloadValidation(unittest.TestCase):
 
     def test_numeric_uid_is_authoritative(self):
         out = io.BytesIO()
-        with tarfile.open(fileobj=out, mode='w:gz') as archive:
+        with tarfile.open(fileobj=out, mode='w') as archive:
             item = tarfile.TarInfo('looks-root')
             item.uid, item.gid, item.uname, item.gname, item.mode = 501, 20, 'root', 'wheel', 0o644
             archive.addfile(item)
@@ -127,7 +192,7 @@ class PayloadValidation(unittest.TestCase):
             path.write_bytes(data)
             normalize(path, 12345)
             normalized = path.read_bytes()
-            files = tar_members(ar_members(path)['data.tar.gz'])
+            files = tar_members(decompress_tar('data.tar.gz', ar_members(path)['data.tar.gz']))
             self.assertEqual(files['payload'][1], payload)
             self.assertEqual(files['payload'][0].mtime, 12345)
             normalize(path, 12345)

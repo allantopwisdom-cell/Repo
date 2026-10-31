@@ -7,7 +7,7 @@ import io
 import lzma
 from pathlib import Path
 import tarfile
-from verify_package import ar_members
+from verify_package import ar_members, decompress_tar, uncompressed_tar
 
 
 def normalize(path, epoch):
@@ -18,7 +18,7 @@ def normalize(path, epoch):
     for name, data in members.items():
         if name.startswith(('control.tar.', 'data.tar.')):
             out = io.BytesIO()
-            with tarfile.open(fileobj=io.BytesIO(data), mode='r:*') as source:
+            with uncompressed_tar(decompress_tar(name, data)) as source:
                 with tarfile.open(fileobj=out, mode='w', format=tarfile.USTAR_FORMAT) as target:
                     for original in source:
                         item = copy.copy(original)

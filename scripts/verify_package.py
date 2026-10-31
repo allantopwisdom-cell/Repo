@@ -7,6 +7,7 @@ import io
 import lzma
 from pathlib import Path
 import plistlib
+import re
 import struct
 import tarfile
 
@@ -19,6 +20,10 @@ PANEL_PATH = 'Library/PreferenceLoader/Preferences/PowercuffBaldaranTrusted/'
 CONTROL_FILES = {'control', 'postinst', 'prerm', 'postrm'}
 PAYLOAD_FILES = {LIBRARY + '.dylib', LIBRARY + '.plist'} | {PANEL_PATH + name for name in
                  ('Powercuff.plist', 'icon.png', 'Powercuff@2x.png', 'Powercuff@3x.png')}
+EXPECTED_DEPENDS = {'mobilesubstrate (>= 0.9.9000)', 'preferenceloader',
+                    'firmware (>= 16.0)', 'firmware (<< 17.0)'}
+EXPECTED_CONFLICTS = {'com.rpetrich.powercuff', 'com.baldaran.powercuff-r3vamp',
+                      'com.minis.powercuff-r3vamp-roothide', 'com.minis.powercuff-r3vamp-trusted'}
 
 
 class UniquePlistDictionary(dict):
@@ -110,18 +115,30 @@ def package_archives(members, allowed_files=None):
 
 
 def control_fields(contents):
-    fields, current = {}, None
-    for line in contents.decode().splitlines():
-        if not line:
+    text = contents.decode('utf-8').replace('\r\n', '\n')
+    assert all(c in '\t\n' or ord(c) >= 32 and ord(c) != 127 for c in text), 'invalid control character'
+    fields, current, seen, ended = {}, None, set(), False
+    # Debian binary metadata is one stanza with LF/CRLF physical lines. Unicode
+    # splitlines()/isspace() would give a different interpretation from dpkg.
+    for line in text.split('\n'):
+        if not line.strip(' \t'):
+            if fields: ended = True
             continue
-        if line[0].isspace():
+        assert not ended, 'multiple control stanzas are forbidden'
+        if line[0] in ' \t':
             assert current, 'control continuation without a field'
             fields[current] += '\n' + line[1:]
             continue
+        assert ':' in line, 'control field has no separator'
         key, value = line.split(':', 1)
-        assert key not in fields, f'duplicate control field: {key}'
-        fields[key] = value.strip()
+        assert re.fullmatch(r'[!-9;-~]+', key) and key[0] not in '#-', 'invalid control field name'
+        assert key.lower() not in seen, f'duplicate control field: {key}'
+        seen.add(key.lower())
+        value = value.strip(' \t')
+        assert value, 'empty binary control field'
+        fields[key] = value
         current = key
+    assert fields, 'empty binary control stanza'
     return fields
 
 
@@ -167,6 +184,9 @@ def verify(path, expected_version, source_root=None):
         assert controls[name][0].mode == 0o755, f'{name} permissions'
     if source_root is not None:
         verify_source_contents(controls, files, source_root)
+    for key, expected in (('Depends', EXPECTED_DEPENDS), ('Conflicts', EXPECTED_CONFLICTS)):
+        entries = [value.strip() for value in fields.get(key, '').split(',')]
+        assert len(entries) == len(expected) and set(entries) == expected, f'package {key} differs from reviewed policy'
     item, binary = files[lib + '.dylib']
     magic, cpu, subtype, filetype, ncmds, cmdsize, flags, reserved = struct.unpack_from('<8I', binary)
     assert magic == 0xFEEDFACF and cpu == 0x0100000C and (subtype & 0xFFFFFF) == 2, 'not thin arm64e'

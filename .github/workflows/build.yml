@@ -93,7 +93,7 @@ jobs:
           retention-days: 90
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/release/powercuff-1.3.10'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/release/powercuff-1.3.11'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT_NAME" --dir packages
-          test "$(cat packages/VERSION)" = 1.3.10
+          test "$(cat packages/VERSION)" = 1.3.11
           test "$(cat packages/SOURCE_COMMIT)" = "$GITHUB_SHA"
           (cd packages && sha256sum -c SHA256SUMS)
       - name: Publish a new formal release

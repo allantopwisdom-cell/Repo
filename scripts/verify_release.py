@@ -27,6 +27,13 @@ def verify_release(directory, release, commit, tag, draft, *, prerelease):
         manifest[name] = digest
     assert set(manifest) == set(files) - {'SHA256SUMS'}, 'attachment manifest coverage mismatch'
     assert all(digests[name] == digest for name, digest in manifest.items()), 'local attachment hash mismatch'
+    version = (root / 'VERSION').read_text().strip()
+    assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'invalid release version'
+    required = {'SOURCE_COMMIT', 'SOURCE_FILES.sha256', 'SOURCE_TESTS.txt', 'TOOLCHAIN_REFS',
+                'BUILD_ENVIRONMENT.txt', 'verification.txt', 'VERSION', 'verify_release.py', 'SHA256SUMS',
+                f'com.minis.powercuff-baldaran-trusted_{version}_iphoneos-arm64e.deb'}
+    required.update(f'{kind}-{version}.md' for kind in ('AUDIT', 'BUILD', 'RELEASE'))
+    assert set(files) == required, 'required release asset set mismatch'
     assert release['tag_name'] == tag and release['target_commitish'] == commit, 'release source mismatch'
     assert release['draft'] is draft and release['prerelease'] is prerelease, 'unexpected release visibility/type'
     assets = release['assets']

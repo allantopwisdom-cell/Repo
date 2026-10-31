@@ -125,8 +125,19 @@ def mutate_tar(blob, scenario, archive_name):
                 payload = bytes(payload); changed = True
             elif scenario == 'trailing-file-slash' and item.name.removeprefix('./') == 'postinst':
                 item.name += '/'; changed = True
-            elif scenario == 'unreviewed-dependency' and item.name.removeprefix('./') == 'control':
-                payload = payload.replace(b'preferenceloader', b'unreviewed-dependency'); changed = True
+            elif scenario in ('unreviewed-dependency', 'missing-dependency', 'duplicate-dependency',
+                              'missing-conflict', 'split-control-stanza') and item.name.removeprefix('./') == 'control':
+                if scenario == 'unreviewed-dependency':
+                    payload = payload.replace(b'preferenceloader', b'unreviewed-dependency')
+                elif scenario == 'missing-dependency':
+                    payload = payload.replace(b'preferenceloader, ', b'')
+                elif scenario == 'duplicate-dependency':
+                    payload = payload.replace(b'preferenceloader', b'preferenceloader, preferenceloader')
+                elif scenario == 'missing-conflict':
+                    payload = payload.replace(b'com.rpetrich.powercuff, ', b'')
+                else:
+                    payload = payload.replace(b'Depends:', b'\nDepends:')
+                changed = True
             elif scenario in ('boolean-profile', 'duplicate-plist-key') and item.name.endswith('/Powercuff.plist'):
                 panel = plistlib.loads(payload)
                 if scenario == 'boolean-profile':
@@ -150,7 +161,8 @@ def mutate_tar(blob, scenario, archive_name):
 with tempfile.TemporaryDirectory() as directory:
     for scenario in ('unreviewed-script', 'changed-icon', 'unreadable-dylib', 'legacy-arm64e-abi', 'unreviewed-dependency',
                      'reordered-members', 'compression-name-mismatch', 'extra-control-directory', 'extra-data-directory',
-                     'trailing-file-slash', 'boolean-profile', 'duplicate-plist-key'):
+                     'trailing-file-slash', 'boolean-profile', 'duplicate-plist-key', 'missing-dependency',
+                     'duplicate-dependency', 'missing-conflict', 'split-control-stanza'):
         damaged = dict(members)
         if scenario == 'reordered-members':
             damaged = dict(reversed(list(damaged.items())))
@@ -160,7 +172,8 @@ with tempfile.TemporaryDirectory() as directory:
             damaged = {(wrong_name if name == control_name else name): blob for name, blob in damaged.items()}
         else:
             name = control_name if scenario in ('unreviewed-script', 'unreviewed-dependency', 'extra-control-directory',
-                                                'trailing-file-slash') else data_name
+                                                'trailing-file-slash', 'missing-dependency', 'duplicate-dependency',
+                                                'missing-conflict', 'split-control-stanza') else data_name
             damaged[name] = mutate_tar(damaged[name], scenario, name)
         data = bytearray(b'!<arch>\n')
         for name, payload in damaged.items():
@@ -182,7 +195,11 @@ with tempfile.TemporaryDirectory() as directory:
                                'extra-data-directory': 'unexpected package directory',
                                'trailing-file-slash': 'noncanonical package file path',
                                'boolean-profile': 'plist differs from source',
-                               'duplicate-plist-key': 'duplicate plist dictionary key'}[scenario]
+                               'duplicate-plist-key': 'duplicate plist dictionary key',
+                               'missing-dependency': 'control metadata differs',
+                               'duplicate-dependency': 'control metadata differs',
+                               'missing-conflict': 'control metadata differs',
+                               'split-control-stanza': 'multiple control stanzas'}[scenario]
             assert expected_reason in str(error), f'{scenario} failed for an unrelated reason: {error}'
         else:
             raise AssertionError(f'actual DEB mutation {scenario} was accepted')
@@ -195,3 +212,11 @@ with tempfile.TemporaryDirectory() as directory:
             else:
                 raise AssertionError('boolean profile bypassed standalone schema verification')
             print('Actual built DEB: boolean profile rejected without a source checkout PASS')
+        if scenario in ('unreviewed-dependency', 'missing-dependency', 'duplicate-dependency', 'missing-conflict'):
+            try:
+                with contextlib.redirect_stdout(io.StringIO()): verify(path, version)
+            except AssertionError as error:
+                assert ('package Conflicts differs' if scenario == 'missing-conflict' else 'package Depends differs') in str(error), str(error)
+            else:
+                raise AssertionError(f'{scenario} bypassed standalone control policy')
+            print(f'Actual built DEB: {scenario} rejected without a source checkout PASS')

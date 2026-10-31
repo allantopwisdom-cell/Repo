@@ -98,6 +98,7 @@ import plistlib
 import tarfile
 import tempfile
 from verify_package import control_fields, verify
+from normalize_package import normalize
 
 source_root = Path(__file__).resolve().parents[1]
 control_name, = [n for n in members if n.startswith('control.tar.')]
@@ -109,6 +110,19 @@ with contextlib.redirect_stdout(io.StringIO()):
 def compress_tar(raw, archive_name):
     if archive_name.endswith('.gz'): return gzip.compress(raw, mtime=0)
     return lzma.compress(raw, format=lzma.FORMAT_XZ if archive_name.endswith('.xz') else lzma.FORMAT_ALONE)
+
+# Mutate the physical first ar header; rebuilding members would hide these faults.
+AR_FIELDS = {
+    'ar-signed-size': (56, b'+4'.ljust(10, b' ')),
+    'ar-underscored-size': (56, b'0_4'.ljust(10, b' ')),
+    'ar-leading-tab-size': (56, b'\t4'.ljust(10, b' ')),
+    'ar-trailing-tab-size': (56, b'4\t'.ljust(10, b' ')),
+    'ar-double-slash-name': (8, b'debian-binary//'.ljust(16, b' ')),
+    'ar-leading-space-name': (8, b' debian-binary/'.ljust(16, b' ')),
+    'ar-leading-tab-name': (8, b'\tdebian-binary/'.ljust(16, b' ')),
+    'ar-trailing-tab-name': (8, b'debian-binary/\t'.ljust(16, b' ')),
+    'ar-unicode-space-name': (8, b'\xc2\xa0debian-binary'.ljust(16, b' ')),
+}
 
 def mutate_tar(blob, scenario, archive_name):
     out = io.BytesIO()
@@ -167,9 +181,11 @@ with tempfile.TemporaryDirectory() as directory:
                      'trailing-file-slash', 'boolean-profile', 'duplicate-plist-key', 'missing-dependency',
                      'duplicate-dependency', 'missing-conflict', 'split-control-stanza',
                      'nested-control-gzip', 'nested-control-xz', 'nested-data-gzip', 'nested-data-xz',
-                     'tar-trailer-control', 'tar-trailer-data', 'tar-eof-control', 'tar-eof-data'):
+                     'tar-trailer-control', 'tar-trailer-data', 'tar-eof-control', 'tar-eof-data', *AR_FIELDS):
         damaged = dict(members)
-        if scenario == 'reordered-members':
+        if scenario in AR_FIELDS:
+            pass
+        elif scenario == 'reordered-members':
             damaged = dict(reversed(list(damaged.items())))
         elif scenario == 'compression-name-mismatch':
             # Change only the label; preserve original compressed bytes.
@@ -197,6 +213,10 @@ with tempfile.TemporaryDirectory() as directory:
             data.extend(f'{name + "/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{len(payload):<10}`\n'.encode())
             data.extend(payload)
             if len(payload) & 1: data.extend(b'\n')
+        if scenario in AR_FIELDS:
+            location, field = AR_FIELDS[scenario]
+            assert len(field) == (10 if location == 56 else 16)
+            data[location:location + len(field)] = field
         path = Path(directory) / 'negative.deb'
         path.write_bytes(data)
         try:
@@ -217,6 +237,8 @@ with tempfile.TemporaryDirectory() as directory:
                                'duplicate-dependency': 'control metadata differs',
                                'missing-conflict': 'control metadata differs',
                                'split-control-stanza': 'multiple control stanzas',
+                               **{label: ('size field' if location == 56 else 'name field')
+                                  for label, (location, _) in AR_FIELDS.items()},
                                **{label: 'uncompressed tar' for label in (
                                    'nested-control-gzip', 'nested-control-xz', 'nested-data-gzip', 'nested-data-xz',
                                    'tar-trailer-control', 'tar-trailer-data', 'tar-eof-control', 'tar-eof-data')}}[scenario]
@@ -224,6 +246,17 @@ with tempfile.TemporaryDirectory() as directory:
         else:
             raise AssertionError(f'actual DEB mutation {scenario} was accepted')
         print(f'Actual built DEB: {scenario} rejected PASS')
+        if scenario in AR_FIELDS:
+            for operation in (lambda: verify(path, version), lambda: normalize(path, 0)):
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()): operation()
+                except AssertionError as error:
+                    assert expected_reason in str(error), f'{scenario}: {error}'
+                else:
+                    raise AssertionError(f'{scenario} bypassed standalone verification or normalization')
+                assert path.read_bytes() == bytes(data), 'invalid ar input was rewritten'
+                assert not path.with_suffix('.deb.normalized').exists()
+            print(f'Actual built DEB: {scenario} standalone check and normalization reject without rewriting PASS')
         if scenario == 'boolean-profile':
             try:
                 with contextlib.redirect_stdout(io.StringIO()): verify(path, version)

@@ -19,6 +19,57 @@ class PayloadValidation(unittest.TestCase):
                 archive.addfile(item, io.BytesIO(b''))
         return out.getvalue()
 
+    def test_ar_size_field_matches_decimal_archive_syntax(self):
+        import tempfile
+        from verify_package import ar_members
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'size.deb'
+            for field in (b'+4        ', b'0_4       ', b'\t4        ', b'4\t        ',
+                          b'4\r        ', b'4\n        ', b'4\v        ', b'4\f        ',
+                          b'-4        ', b'4 0       ', b'          '):
+                header = f'{"debian-binary/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}'.encode() + field + b'`\n'
+                path.write_bytes(b'!<arch>\n' + header + b'2.0\n')
+                with self.subTest(field=field), self.assertRaisesRegex(AssertionError, 'size field'):
+                    ar_members(path)
+
+    def test_ar_member_names_are_not_trimmed_or_collapsed(self):
+        import tempfile
+        from verify_package import ar_members
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'name.deb'
+            for name in (b'debian-binary//', b' debian-binary/', b'\tdebian-binary/',
+                         b'debian-binary/\t', b'\xc2\xa0debian-binary', b'debian-binary\0'):
+                header = name.ljust(16, b' ') + f'{0:<12}{0:<6}{0:<6}{"100644":<8}{4:<10}`\n'.encode()
+                path.write_bytes(b'!<arch>\n' + header + b'2.0\n')
+                with self.subTest(name=name), self.assertRaisesRegex(AssertionError, 'name field'):
+                    ar_members(path)
+
+    def test_ar_valid_names_and_decimal_padding(self):
+        import tempfile
+        from verify_package import ar_members
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'valid.deb'
+            for name in (b'debian-binary', b'debian-binary/'):
+                for size in (b'4         ', b'         4', b'0000000004'):
+                    header = name.ljust(16, b' ') + f'{0:<12}{0:<6}{0:<6}{"100644":<8}'.encode() + size + b'`\n'
+                    path.write_bytes(b'!<arch>\n' + header + b'2.0\n')
+                    with self.subTest(name=name, size=size):
+                        self.assertEqual(ar_members(path), {'debian-binary': b'2.0\n'})
+
+    def test_normalization_rejects_invalid_ar_without_rewriting(self):
+        import tempfile
+        from normalize_package import normalize
+        valid = (b'!<arch>\n' + f'{"debian-binary/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{4:<10}`\n'.encode() + b'2.0\n')
+        for start, field, reason in ((56, b'+4        ', 'size field'),
+                                      (8, b'debian-binary// ', 'name field')):
+            data = bytearray(valid); data[start:start + len(field)] = field
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'bad.deb'; path.write_bytes(data)
+                with self.assertRaisesRegex(AssertionError, reason):
+                    normalize(path, 12345)
+                self.assertEqual(path.read_bytes(), bytes(data))
+                self.assertFalse(path.with_suffix('.deb.normalized').exists())
+
     def test_regular_file(self):
         self.assertIn('valid', tar_members(self.archive(('valid', tarfile.REGTYPE, 0o644))))
 

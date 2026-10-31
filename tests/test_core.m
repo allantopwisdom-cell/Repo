@@ -7,6 +7,7 @@
 #import "PCRPreferences.h"
 #import "PCRRuntime.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -490,5 +491,32 @@ int main(void) {
         replacement = [TestProduct new]; PCRCaptureProduct(replacement); Drain();
         assert(replacement.calls == 1 && Status() == 0 && !PCRAwaitingReply && Tasks.count == 0);
         puts("Core: product released during handshake stops requests; replacement obtains fresh Off PASS");
+
+        // Exercise malformed persisted values through the real publisher,
+        // session transport and receiver, including recovery by a valid edit.
+        for (id raw in @[@YES, @NO, @"4", @(-1), @5, @2.5, @(NAN), @(INFINITY), NSNull.null, @[], @{}]) {
+            Reset(); product = [TestProduct new]; Preferences = @{@"PowerMode": @4};
+            PCRCaptureProduct(product); Drain(); assert(Status() == 4 && product.calls == 1);
+            Preferences = @{@"PowerMode": raw}; PCRRequestForSettingsChange(); Drain();
+            assert(Status() == 0 && product.calls == 2 && [product.mode isEqual:@"off"]);
+            assert(Preferences[@"PowerMode"] == raw && Tasks.count == 0);
+            Preferences = @{@"PowerMode": @2, @"RequireLowPowerMode": @YES};
+            PCRRequestForSettingsChange(); Drain(); assert(Status() == 0 && product.calls == 2);
+            LowPower = YES; PCRRefreshPreferences(); Drain();
+            assert(Status() == 2 && product.calls == 3 && [product.mode isEqual:@"light"]);
+            assert([Preferences[@"PowerMode"] integerValue] == 2 && Tasks.count == 0);
+        }
+        for (id gate in @[@"1", @2, @(-1), @0.5, @(NAN), NSNull.null, @[], @{}]) {
+            Reset(); product = [TestProduct new]; Preferences = @{@"PowerMode": @4};
+            PCRCaptureProduct(product); Drain();
+            Preferences = @{@"PowerMode": @4, @"RequireLowPowerMode": gate};
+            PCRRequestForSettingsChange(); Drain();
+            assert(Status() == 0 && product.calls == 2 && [product.mode isEqual:@"off"]);
+            assert(Preferences[@"RequireLowPowerMode"] == gate && [Preferences[@"PowerMode"] integerValue] == 4);
+            Preferences = @{@"PowerMode": @4, @"RequireLowPowerMode": @NO};
+            PCRRequestForSettingsChange(); Drain();
+            assert(Status() == 4 && product.calls == 3 && [product.mode isEqual:@"heavy"] && Tasks.count == 0);
+        }
+        puts("Core: malformed saved modes/gates reach Off without writes; valid edits and LPM recover PASS");
     }
 }

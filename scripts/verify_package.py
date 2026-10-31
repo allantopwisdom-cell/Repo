@@ -58,9 +58,13 @@ def ar_members(path):
     while offset < len(data):
         header = data[offset:offset + 60]
         assert len(header) == 60 and header[58:] == b'`\n', 'invalid ar header'
+        # int()/strip() accept signs, underscores and non-Space whitespace that
+        # dpkg rejects. Parse physical fields before any numeric/name conversion.
+        assert re.fullmatch(rb' *[0-9]+ *', header[48:58]), 'invalid ar member size field'
         size = int(header[48:58])
-        assert size >= 0, 'negative ar member size'
-        name = header[:16].decode().strip().rstrip('/')
+        raw_name = header[:16].rstrip(b' ')
+        assert re.fullmatch(rb'[A-Za-z0-9_.-]{1,15}/?', raw_name), 'invalid ar member name field'
+        name = raw_name.removesuffix(b'/').decode('ascii')
         payload = data[offset + 60:offset + 60 + size]
         assert len(payload) == size, 'truncated member'
         assert name not in result, 'duplicate ar member'

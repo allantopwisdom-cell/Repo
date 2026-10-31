@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Inspect Debian/Mach-O bytes without extracting as root. Fails closed for this project."""
 import argparse
+from contextlib import contextmanager
 import gzip
 import hashlib
 import io
@@ -72,13 +73,39 @@ def ar_members(path):
     return result
 
 
+def decompress_tar(name, data):
+    suffix = name.rsplit('.', 1)[-1]
+    assert suffix in ('gz', 'xz', 'lzma'), 'unsupported Debian compression suffix'
+    try:
+        return (gzip.decompress(data) if suffix == 'gz' else
+                lzma.decompress(data, format=lzma.FORMAT_XZ if suffix == 'xz' else lzma.FORMAT_ALONE))
+    except (OSError, EOFError, lzma.LZMAError) as error:
+        raise AssertionError('Debian compression does not match member name') from error
+
+
+@contextmanager
+def uncompressed_tar(data):
+    # Debian has one compression layer. Autodetection here would accept a second
+    # layer that dpkg cannot parse. Also inspect bytes after tarfile's first EOF:
+    # a successful member iteration alone silently ignores appended payloads.
+    assert len(data) % 512 == 0, 'invalid uncompressed tar block framing'
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode='r:') as archive:
+            archive.getmembers()
+            trailer = data[archive.offset:]
+            assert len(trailer) >= 1024 and not any(trailer), 'invalid uncompressed tar end markers/trailer'
+            yield archive
+    except (tarfile.TarError, EOFError) as error:
+        raise AssertionError('invalid uncompressed tar archive') from error
+
+
 def tar_members(data, allowed_files=None):
     allowed_directories = {'.'}
     if allowed_files is not None:
         for path in allowed_files:
             parts = path.split('/')
             allowed_directories.update('/'.join(parts[:i]) for i in range(1, len(parts)))
-    with tarfile.open(fileobj=io.BytesIO(data), mode='r:*') as archive:
+    with uncompressed_tar(data) as archive:
         result, seen = {}, set()
         for item in archive:
             assert item.isdir() or not item.name.endswith('/'), 'unsafe/noncanonical package file path'
@@ -103,13 +130,7 @@ def package_archives(members, allowed_files=None):
     result = []
     for name, prefix in zip(names[1:], ('control.tar.', 'data.tar.')):
         assert name.startswith(prefix), 'incorrect Debian member order'
-        suffix = name[len(prefix):]
-        assert suffix in ('gz', 'xz', 'lzma'), 'unsupported Debian compression suffix'
-        try:
-            raw = (gzip.decompress(members[name]) if suffix == 'gz' else
-                   lzma.decompress(members[name], format=lzma.FORMAT_XZ if suffix == 'xz' else lzma.FORMAT_ALONE))
-        except (OSError, EOFError, lzma.LZMAError) as error:
-            raise AssertionError('Debian compression does not match member name') from error
+        raw = decompress_tar(name, members[name])
         result.append(tar_members(raw, allowed_files[len(result)] if allowed_files is not None else None))
     return tuple(result)
 

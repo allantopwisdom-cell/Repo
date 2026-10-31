@@ -2,12 +2,12 @@
 """Negative tests against the actual signed Mach-O from this build."""
 import struct
 import sys
-from verify_package import ar_members, tar_members
+from verify_package import ar_members, decompress_tar, tar_members
 from macho_signature import verify_signature
 
 members = ar_members(sys.argv[1])
 name, = [n for n in members if n.startswith('data.tar.')]
-files = tar_members(members[name])
+files = tar_members(decompress_tar(name, members[name]))
 name, = [n for n in files if n.endswith('.dylib')]
 binary = files[name][1]
 offset = 32
@@ -102,9 +102,13 @@ from verify_package import control_fields, verify
 source_root = Path(__file__).resolve().parents[1]
 control_name, = [n for n in members if n.startswith('control.tar.')]
 data_name, = [n for n in members if n.startswith('data.tar.')]
-version = control_fields(tar_members(members[control_name])['control'][1])['Version']
+version = control_fields(tar_members(decompress_tar(control_name, members[control_name]))['control'][1])['Version']
 with contextlib.redirect_stdout(io.StringIO()):
     verify(sys.argv[1], version, source_root)
+
+def compress_tar(raw, archive_name):
+    if archive_name.endswith('.gz'): return gzip.compress(raw, mtime=0)
+    return lzma.compress(raw, format=lzma.FORMAT_XZ if archive_name.endswith('.xz') else lzma.FORMAT_ALONE)
 
 def mutate_tar(blob, scenario, archive_name):
     out = io.BytesIO()
@@ -155,14 +159,15 @@ def mutate_tar(blob, scenario, archive_name):
             target.addfile(extra); changed = True
     assert changed
     raw = out.getvalue()
-    if archive_name.endswith('.gz'): return gzip.compress(raw, mtime=0)
-    return lzma.compress(raw, format=lzma.FORMAT_XZ if archive_name.endswith('.xz') else lzma.FORMAT_ALONE)
+    return compress_tar(raw, archive_name)
 
 with tempfile.TemporaryDirectory() as directory:
     for scenario in ('unreviewed-script', 'changed-icon', 'unreadable-dylib', 'legacy-arm64e-abi', 'unreviewed-dependency',
                      'reordered-members', 'compression-name-mismatch', 'extra-control-directory', 'extra-data-directory',
                      'trailing-file-slash', 'boolean-profile', 'duplicate-plist-key', 'missing-dependency',
-                     'duplicate-dependency', 'missing-conflict', 'split-control-stanza'):
+                     'duplicate-dependency', 'missing-conflict', 'split-control-stanza',
+                     'nested-control-gzip', 'nested-control-xz', 'nested-data-gzip', 'nested-data-xz',
+                     'tar-trailer-control', 'tar-trailer-data', 'tar-eof-control', 'tar-eof-data'):
         damaged = dict(members)
         if scenario == 'reordered-members':
             damaged = dict(reversed(list(damaged.items())))
@@ -170,6 +175,18 @@ with tempfile.TemporaryDirectory() as directory:
             # Change only the label; preserve original compressed bytes.
             wrong_name = 'control.tar.xz' if control_name.endswith('.gz') else 'control.tar.gz'
             damaged = {(wrong_name if name == control_name else name): blob for name, blob in damaged.items()}
+        elif scenario.startswith(('nested-', 'tar-trailer-', 'tar-eof-')):
+            name = control_name if 'control' in scenario else data_name
+            raw = decompress_tar(name, damaged[name])
+            if scenario.startswith('nested-'):
+                raw = gzip.compress(raw, mtime=0) if scenario.endswith('-gzip') else lzma.compress(raw)
+            elif scenario.startswith('tar-trailer-'):
+                raw += b'UNREVIEWED' + bytes(502) # Keep block alignment; content after EOF is still forbidden.
+            else:
+                with tarfile.open(fileobj=io.BytesIO(raw), mode='r:') as archive:
+                    archive.getmembers()
+                    raw = raw[:archive.offset] # No two-block tar end marker.
+            damaged[name] = compress_tar(raw, name)
         else:
             name = control_name if scenario in ('unreviewed-script', 'unreviewed-dependency', 'extra-control-directory',
                                                 'trailing-file-slash', 'missing-dependency', 'duplicate-dependency',
@@ -199,7 +216,10 @@ with tempfile.TemporaryDirectory() as directory:
                                'missing-dependency': 'control metadata differs',
                                'duplicate-dependency': 'control metadata differs',
                                'missing-conflict': 'control metadata differs',
-                               'split-control-stanza': 'multiple control stanzas'}[scenario]
+                               'split-control-stanza': 'multiple control stanzas',
+                               **{label: 'uncompressed tar' for label in (
+                                   'nested-control-gzip', 'nested-control-xz', 'nested-data-gzip', 'nested-data-xz',
+                                   'tar-trailer-control', 'tar-trailer-data', 'tar-eof-control', 'tar-eof-data')}}[scenario]
             assert expected_reason in str(error), f'{scenario} failed for an unrelated reason: {error}'
         else:
             raise AssertionError(f'actual DEB mutation {scenario} was accepted')

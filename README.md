@@ -1,12 +1,14 @@
-# Powercuff 1.3.10 — RootHide 正式发布版
+# Powercuff 1.3.11 — RootHide 正式发布版
 
 用于 iOS 16 的系统热模拟档位插件，基于 [Baldaran/Powercuff-r3vamp](https://github.com/Baldaran/Powercuff-r3vamp) 改造。重点验证目标为 iPhone 14 Pro Max / iOS 16.5 / RootHide Dopamine 3.0.4。**尚未经该设备真机验证，不承诺无崩溃、固定 CPU 频率或确定的续航提升。**
 
 ## 当前源码与正式安装包
 
-[v1.3.10 正式 Release](https://github.com/allantopwisdom-cell/Repo/releases/tag/v1.3.10) 对应提交 `93c65728bd6872500d3c6f5a74d3b2bd2b206418`。其中 DEB 的 SHA-256 为 `800caaeba29e2c3fd3fec39ce20bb99af0fd5b03b9844e5a20ea20b29f75ba83`。安装包及其源码、测试、审计证据应以该标签和附件为准。
+本轮发行版本为 [v1.3.11](https://github.com/allantopwisdom-cell/Repo/releases/tag/v1.3.11)，正式源码提交、DEB 哈希和实际验证输出以该 Release 的 SOURCE_COMMIT、SHA256SUMS、SOURCE_TESTS.txt 与 verification.txt 为准。基线 v1.3.10 为提交 `93c65728bd6872500d3c6f5a74d3b2bd2b206418`，其 DEB SHA-256 为 `800caaeba29e2c3fd3fec39ce20bb99af0fd5b03b9844e5a20ea20b29f75ba83`。
 
-发行后的维护分支将同一运行时代码同步到默认源码入口，并升级固定提交的 checkout/upload-artifact 到 Node24，保持 ZIP 归档；setup-xcode 原固定提交已使用 Node24。发布任务固定使用 ubuntu-24.04，减少 ubuntu-latest 自动迁移造成的环境漂移。此维护不改变五档、默认值、LPM、注入范围或设备接口。普通分支/PR/主分支的验证产物仅用于核对当前提交；正式公开仍仅由指定 release 分支在全部门禁通过后执行，既有标签和附件不覆盖。Homebrew 的依赖扫描提示与 macOS runner 容量提示属于构建环境信息，不作为插件功能故障。
+本轮修复已复现的发行门禁问题：Debian control 单段/重复键/物理行解析、独立检查的精确依赖与冲突集合、正式发行13项必备附件。五份运行时源码、两项设置、五档、有限通信预算与维护脚本保持受审行为。所有安装包均从本轮源码编译；主机回归不等于真机稳定性认证。
+
+构建 Actions 固定 Node24 提交，产物保持 ZIP，发布 runner 固定 ubuntu-24.04。普通分支/PR/主分支产物用于验证当前提交；正式公开仅由指定 release 分支在全部门禁通过后执行，既有标签和附件不覆盖。默认分支的源码同步通过单独验证的 PR 完成。
 
 ## 行为与边界
 
@@ -37,9 +39,9 @@ RequireLowPowerMode 默认关闭。开启时：系统 LPM 关闭→请求 Off，
 
 ## 安装与升级
 
-此前本地 1.3.6 撤回记录保留在 LOCAL-BUILD-1.3.6.md。本次修复使用新版本号 1.3.10；只安装本次 Release 的 DEB，并核对该 Release 的 SHA256SUMS。仓库根目录的 1.1.x/1.2.x DEB 仅作历史资料，不作为本版交付。
+此前本地 1.3.6 撤回记录保留在 LOCAL-BUILD-1.3.6.md。本次修复使用新版本号 1.3.11；只安装本次 Release 的 DEB，并核对该 Release 的 SHA256SUMS。仓库根目录的 1.1.x/1.2.x DEB 仅作历史资料，不作为本版交付。
 
-使用匹配源码提交的 CI DEB。安装或升级后**注销一次（respring）**，让 SpringBoard 与 thermalmonitord 同时加载新协议。1.3.1 / 1.3.2 / 1.3.3 / 1.3.4 / 1.3.5 / 1.3.6 / 1.3.7 / 1.3.8 / 1.3.9 / 1.3.10 使用同一协议格式，但仍需注销以替换两端实际运行代码；更早版本协议不兼容。旧会话缓存不会被当作新请求周期的回复；更新时仍须替换两端运行代码。
+使用匹配源码提交的 CI DEB。安装或升级后**注销一次（respring）**，让 SpringBoard 与 thermalmonitord 同时加载新协议。1.3.1 / 1.3.2 / 1.3.3 / 1.3.4 / 1.3.5 / 1.3.6 / 1.3.7 / 1.3.8 / 1.3.9 / 1.3.10 / 1.3.11 使用同一协议格式，但仍需注销以替换两端实际运行代码；更早版本协议不兼容。旧会话缓存不会被当作新请求周期的回复；更新时仍须替换两端运行代码。
 
 安装/卸载脚本在 configure/remove 阶段先只读探测 user/foreground，再按需探测 system 服务域，只对选定的服务尝试一次 kickstart；该命令失败才最多通过 launchctl 向同一服务域发送一次 TERM，不按进程名 killall。找不到服务域或缺少 launchctl 时跳过自动重启，提示通过越狱应用人工重启用户空间；不盲目发送信号。保留实际重启命令诊断、退出码与人工注销提示；探测/命令退出0均不代表已确认重载。不使用双重重启或 SIGKILL。卸载后重启 daemon 清除 hook，随后注销以卸载 SpringBoard 代码。卸载保留用户偏好，重新安装会复用它们。
 
@@ -51,14 +53,14 @@ RequireLowPowerMode 默认关闭。开启时：系统 LPM 关闭→请求 Off，
 sh scripts/check.sh
 export THEOS=/absolute/path/to/roothide-theos
 sh build.sh roothide # 内置规范化、源码对照及实际包反例验证
-python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.10 --source-root .
+python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.11 --source-root .
 ```
 
 构建需要 Python 3.9 或更新版本；Git 源码提交时间用于归档时间，下载源码 ZIP 时请显式设置 `SOURCE_DATE_EPOCH`。构建检查失败会以非零状态退出，勿安装失败构建留下的原始包。
 
-[GitHub Actions](https://github.com/allantopwisdom-cell/Repo/actions) 使用 macOS 15 / Xcode 16.4 / iPhoneOS 16.5 SDK。RootHide Theos 与 SDK 使用固定提交；主项目第三方 Actions 也固定到已核对的提交；设置 Xcode 后才执行 host 回归。打包后统一数值 UID/GID 为 0/0，归档时间来自源码提交；签名 payload 字节不变。PR、主分支及 `audit/**`、`fix/**`、`review/**`、`release/**` 分支执行回归测试、编译与包验证。每份产物附源码提交、全部跟踪文件 SHA-256、工具链引用、实际构建环境与完整源码测试输出。仅 release/powercuff-1.3.10 的 push 在全部构建门禁通过后，使用同一运行产物创建草稿并上传全部附件；逐一核对集合、大小、哈希、版本和源码提交后才公开，再核对公开状态、非公测属性和 Latest 指向。既有标签/Release 不覆盖，标签不另行重编译。
+[GitHub Actions](https://github.com/allantopwisdom-cell/Repo/actions) 使用 macOS 15 / Xcode 16.4 / iPhoneOS 16.5 SDK。RootHide Theos 与 SDK 使用固定提交；主项目第三方 Actions 也固定到已核对的提交；设置 Xcode 后才执行 host 回归。打包后统一数值 UID/GID 为 0/0，归档时间来自源码提交；签名 payload 字节不变。PR、主分支及 `audit/**`、`fix/**`、`review/**`、`release/**` 分支执行回归测试、编译与包验证。每份产物附源码提交、全部跟踪文件 SHA-256、工具链引用、实际构建环境与完整源码测试输出。发行校验固定要求13项必备附件，防止缩减/扩展本地与远端清单后仍被误判为完整。仅 release/powercuff-1.3.11 的 push 在全部构建门禁通过后，使用同一运行产物创建草稿并上传全部附件；逐一核对集合、大小、哈希、版本和源码提交后才公开，再核对公开状态、非公测属性和 Latest 指向。既有标签/Release 不覆盖，标签不另行重编译。
 
-包验证检查：Debian 成员顺序与压缩格式、精确版本、versioned arm64e PAC00（subtype 0x80000002）Mach-O、CodeDirectory 版本布局及代码页/特殊槽覆盖和哈希、数值属主 0/0、iOS 部署目标、文件与必要父目录白名单、RootHide install ID、限定注入范围、plist重复键拒绝、保留布尔/整数/实数区别的源码比较、五档标题/值与偏好键一致性、控制脚本执行位、精确依赖集合；使用 `--source-root` 对照维护脚本、控制元数据、静态 plist 和图标。代码页及特殊槽完整性通过不证明证书信任、PAC 运行行为或设备加载成功。
+包验证检查：Debian 成员顺序与压缩格式、精确版本、versioned arm64e PAC00（subtype 0x80000002）Mach-O、CodeDirectory 版本布局及代码页/特殊槽覆盖和哈希、数值属主 0/0、iOS 部署目标、文件与必要父目录白名单、RootHide install ID、限定注入范围、plist重复键拒绝、保留布尔/整数/实数区别的源码比较、五档标题/值与偏好键一致性、控制脚本执行位、单段control/大小写无关重复字段拒绝、精确依赖与冲突集合（含无源码目录的独立校验）；使用 `--source-root` 对照维护脚本、控制元数据、静态 plist 和图标。代码页及特殊槽完整性通过不证明证书信任、PAC 运行行为或设备加载成功。
 
 ## 设备诊断
 
@@ -76,10 +78,10 @@ python3 scripts/verify_package.py packages/YOUR_PACKAGE.deb --version 1.3.10 --s
 
 源码检查新增直接提取实际构造函数的主机故障注入：注册失败、LPM观察失败、提前及取消后回调和ABI拒绝，不执行真实hook或设备操作。
 
-详细发现、修复依据与待验证项见 [AUDIT-1.3.10.md](AUDIT-1.3.10.md)。旧 AUDIT-1.3.9.md / AUDIT-1.3.8.md / AUDIT-1.3.7.md / AUDIT-1.3.6.md / AUDIT-1.3.5.md / AUDIT-1.3.4.md / AUDIT-1.3.3.md / AUDIT-1.3.2.md / AUDIT-1.3.0.md / ANALYSIS.md / BUILD-REVIEW.md 仅记录历史版本，不作为当前构建或真机验证证明。
+详细发现、修复依据与待验证项见 [AUDIT-1.3.11.md](AUDIT-1.3.11.md)。旧 AUDIT-1.3.10.md / AUDIT-1.3.9.md / AUDIT-1.3.8.md / AUDIT-1.3.7.md / AUDIT-1.3.6.md / AUDIT-1.3.5.md / AUDIT-1.3.4.md / AUDIT-1.3.3.md / AUDIT-1.3.2.md / AUDIT-1.3.0.md / ANALYSIS.md / BUILD-REVIEW.md 仅记录历史版本，不作为当前构建或真机验证证明。
 
 ## 发行验收
 
 按用户要求，本轮通过全部构建门禁后创建非 Pre-release 的正式 GitHub Release，并设为 Latest。正式发布属性不等于目标设备已实测放行：未连接 iPhone15,3 / iOS16.5 / RootHide Dopamine3.0.4；PAC 执行、真实私有 API、温控恢复、watchdog 和续航仍未获得真机证据。安装/升级/卸载、Off → Light → Off、LPM 门控、两进程分别重载和待机恢复须按当前审计报告记录；不得据此认定省电幅度或与 Hello CPU 联用安全。
 
-1.3.4 专用验收工具和哈希清单仅供该历史包使用；不要用它们校验 1.3.10。当前版本的只读诊断入口为 `verify-on-device.sh`，完整验收步骤见 AUDIT-1.3.10.md。
+1.3.4 专用验收工具和哈希清单仅供该历史包使用；不要用它们校验 1.3.11。当前版本的只读诊断入口为 `verify-on-device.sh`，完整验收步骤见 AUDIT-1.3.11.md。

@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo '96fbfcdfab3663fa9e8fd42ca6f5728f31e490fa2bbef317f483e13cc5e99fbc  PowerCuff-RootHide-1.2.3-source.zip' | shasum -a 256 -c -
+          echo '1b7ab77b2879f683c238e4d0bfe92c27c99fceecb372c925cff3815267c8986f  PowerCuff-RootHide-1.2.3-source.zip' | shasum -a 256 -c -
           unzip -q PowerCuff-RootHide-1.2.3-source.zip 'rebuilt-1.2.3/*'
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
         with:

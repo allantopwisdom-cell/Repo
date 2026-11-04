@@ -2,7 +2,7 @@ name: Build Vedette RH
 on:
   push:
     branches: ['vedette/**']
-    paths: ['vedette-rh/**', '.github/workflows/vedette.yml']
+    paths: ['vedette-rh/**', 'Vedette-RH-*-source.zip', '.github/workflows/vedette.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -30,6 +30,12 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
         with:
           xcode-version: '16.4'
+      - name: Unpack and verify reviewed source archive
+        run: |
+          set -euo pipefail
+          unzip -q Vedette-RH-1.2.0-beta1-source.zip
+          (cd vedette-rh && shasum -a 256 -c SHA256SUMS)
+          chmod 755 vedette-rh/layout/DEBIAN/*
       - name: Host regression tests
         run: |
           set -euo pipefail
@@ -91,7 +97,8 @@ jobs:
           cp vedette-tests.txt vedette-build.txt vedette-verification.txt delivery/
           cp vedette-rh/docs/VALIDATION_CN.md delivery/SOURCE_VALIDATION_CN.md
           git rev-parse HEAD > delivery/SOURCE_COMMIT
-          git archive HEAD vedette-rh .github/workflows/vedette.yml | gzip > delivery/Vedette-RH-source.tar.gz
+          cp Vedette-RH-1.2.0-beta1-source.zip delivery/
+          cp .github/workflows/vedette.yml delivery/vedette-workflow.yml
           printf 'THEOS=%s\nSDK=%s\nALTLIST=%s\n' "$THEOS_REF" "$SDK_REF" "$ALTLIST_REF" > delivery/TOOLCHAIN_REFS
           { xcodebuild -version; clang --version; brew list --versions ldid dpkg xz; } > delivery/BUILD_ENVIRONMENT.txt
           printf '%s\n' 'Compiled on macOS with RootHide Theos and iOS 16.5 SDK. arm64e and embedded signature commands checked. Not installed or device tested; power savings and runtime compatibility remain unverified. Runtime AltList must be installed separately.' > delivery/BUILD_RESULT.txt

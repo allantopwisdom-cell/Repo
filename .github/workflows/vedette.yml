@@ -1,0 +1,115 @@
+name: Build Vedette RH
+on:
+  push:
+    branches: ['vedette/**']
+    paths: ['vedette-rh/**', '.github/workflows/vedette.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vedette-${{ github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+  THEOS: ${{ github.workspace }}/theos-roothide
+  THEOS_REF: cfba89a53a05b4a1b822121158acc3669c20602f
+  SDK_REF: 0222fd5413cf4b9af096f37b4621afa2688572f7
+  ALTLIST_REF: 9db09f92eff0404ae7fa9c2fe6c25ba13d5e02d7
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: '16.4'
+      - name: Host regression tests
+        run: |
+          set -euo pipefail
+          sh vedette-rh/tests/run.sh | tee vedette-tests.txt
+      - name: Checkout RootHide Theos
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: roothide/theos
+          ref: ${{ env.THEOS_REF }}
+          path: theos-roothide
+          submodules: recursive
+          persist-credentials: false
+      - name: Install iOS 16.5 SDK and packaging tools
+        run: |
+          set -euo pipefail
+          brew install ldid dpkg xz
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+          stage="$(mktemp -d)"
+          trap 'rm -rf "$stage"' EXIT
+          git clone --filter=blob:none --no-checkout https://github.com/theos/sdks.git "$stage/sdks"
+          git -C "$stage/sdks" sparse-checkout set iPhoneOS16.5.sdk
+          git -C "$stage/sdks" checkout "$SDK_REF"
+          mkdir -p "$THEOS/sdks"
+          cp -R "$stage/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
+      - name: Checkout AltList build dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: opa334/AltList
+          ref: ${{ env.ALTLIST_REF }}
+          path: altlist-build
+          persist-credentials: false
+      - name: Build real AltList framework for linking
+        run: |
+          set -euo pipefail
+          make -C altlist-build FINALPACKAGE=1 ARCHS=arm64e THEOS_PACKAGE_SCHEME=roothide TARGET=iphone:clang:16.5:16.0
+          test -f altlist-build/.theos/obj/AltList.framework/AltList
+          mkdir -p "$THEOS/lib/iphone/roothide"
+          cp -R altlist-build/.theos/obj/AltList.framework "$THEOS/lib/iphone/roothide/"
+      - name: Compile, sign and package Vedette
+        run: |
+          set -euo pipefail
+          sh vedette-rh/scripts/build.sh 2>&1 | tee vedette-build.txt
+          count=$(find vedette-rh/packages -name '*.deb' -type f | wc -l | tr -d ' ')
+          test "$count" = 1
+          package=$(find vedette-rh/packages -name '*.deb' -type f)
+          sh vedette-rh/scripts/verify_deb.sh "$package" | tee vedette-verification.txt
+          mkdir -p delivery
+          cp "$package" delivery/
+          stage="$(mktemp -d)"
+          trap 'rm -rf "$stage"' EXIT
+          dpkg-deb -x "$package" "$stage"
+          while IFS= read -r binary; do
+            test "$(lipo -archs "$binary")" = arm64e
+            otool -l "$binary" | grep -q LC_CODE_SIGNATURE
+            ldid -e "$binary" >/dev/null
+            { file "$binary"; otool -L "$binary"; } >> delivery/MACHO.txt
+          done < <(find "$stage" -type f \( -name Vedette.dylib -o -path '*/VedettePrefs.bundle/VedettePrefs' \))
+          cp vedette-tests.txt vedette-build.txt vedette-verification.txt delivery/
+          cp vedette-rh/docs/VALIDATION_CN.md delivery/SOURCE_VALIDATION_CN.md
+          git rev-parse HEAD > delivery/SOURCE_COMMIT
+          git archive HEAD vedette-rh .github/workflows/vedette.yml | gzip > delivery/Vedette-RH-source.tar.gz
+          printf 'THEOS=%s\nSDK=%s\nALTLIST=%s\n' "$THEOS_REF" "$SDK_REF" "$ALTLIST_REF" > delivery/TOOLCHAIN_REFS
+          { xcodebuild -version; clang --version; brew list --versions ldid dpkg xz; } > delivery/BUILD_ENVIRONMENT.txt
+          printf '%s\n' 'Compiled on macOS with RootHide Theos and iOS 16.5 SDK. arm64e and embedded signature commands checked. Not installed or device tested; power savings and runtime compatibility remain unverified. Runtime AltList must be installed separately.' > delivery/BUILD_RESULT.txt
+          (cd delivery && shasum -a 256 ./* > SHA256SUMS)
+      - name: Upload compiled package and source provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: Vedette-RH-1.2.0-beta1-${{ github.sha }}
+          path: delivery/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload diagnostic logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: Vedette-failure-${{ github.run_id }}
+          path: |
+            vedette-tests.txt
+            vedette-build.txt
+          if-no-files-found: ignore
+          retention-days: 14

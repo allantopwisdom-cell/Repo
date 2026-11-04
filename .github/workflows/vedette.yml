@@ -33,7 +33,7 @@ jobs:
       - name: Unpack and verify reviewed source archive
         run: |
           set -euo pipefail
-          unzip -q Vedette-RH-1.2.0-beta2-source.zip
+          unzip -q Vedette-RH-1.2.0-beta3-source.zip
           (cd vedette-rh && shasum -a 256 -c SHA256SUMS)
           chmod 755 vedette-rh/layout/DEBIAN/*
       - name: Host regression tests
@@ -97,7 +97,7 @@ jobs:
           cp vedette-tests.txt vedette-build.txt vedette-verification.txt delivery/
           cp vedette-rh/docs/VALIDATION_CN.md delivery/SOURCE_VALIDATION_CN.md
           git rev-parse HEAD > delivery/SOURCE_COMMIT
-          cp Vedette-RH-1.2.0-beta2-source.zip delivery/
+          cp Vedette-RH-1.2.0-beta3-source.zip delivery/
           cp .github/workflows/vedette.yml delivery/vedette-workflow.yml
           printf 'THEOS=%s\nSDK=%s\nALTLIST=%s\n' "$THEOS_REF" "$SDK_REF" "$ALTLIST_REF" > delivery/TOOLCHAIN_REFS
           { xcodebuild -version; clang --version; brew list --versions ldid dpkg xz; } > delivery/BUILD_ENVIRONMENT.txt
@@ -106,7 +106,7 @@ jobs:
       - name: Upload compiled package and source provenance
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: Vedette-RH-1.2.0-beta2-${{ github.sha }}
+          name: Vedette-RH-1.2.0-beta3-${{ github.sha }}
           path: delivery/
           if-no-files-found: error
           retention-days: 90

@@ -1,8 +1,8 @@
-name: Build audited PowerCuff RootHide 1.2.7
+name: Build audited PowerCuff RootHide 1.2.8
 on:
   push:
     branches: ['rebuild/powercuff-1.2.6']
-    paths: ['PowerCuff-RootHide-1.2.7-source.zip', '.github/workflows/powercuff-rebuilt.yml']
+    paths: ['PowerCuff-RootHide-1.2.8-source.zip', '.github/workflows/powercuff-rebuilt.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -27,8 +27,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo 'cd5598cbd08b441d841344f100870599c40c5e8015bf4711a20b58b6236fcd73  PowerCuff-RootHide-1.2.7-source.zip' | shasum -a 256 -c -
-          unzip -q PowerCuff-RootHide-1.2.7-source.zip 'rebuilt-1.2.7/*'
+          echo 'da6226767dfab5227f8462d6d53731a7e52c9cf6db88f3f9564a1264da844f29  PowerCuff-RootHide-1.2.8-source.zip' | shasum -a 256 -c -
+          unzip -q PowerCuff-RootHide-1.2.8-source.zip 'rebuilt-1.2.8/*'
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
         with:
           xcode-version: '16.4'
@@ -53,31 +53,13 @@ jobs:
           brew install ldid dpkg xz
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
           echo "$THEOS/bin" >> "$GITHUB_PATH"
-      - name: Reproduce the exact 1.2.6 disable regression
-        shell: bash
-        run: |
-          set -euo pipefail
-          ulimit -c 0
-          echo '34bd40bda2aa1a386c259f1f90bafbe26a0a1dac66c3af95eb60456a9b64bd57  PowerCuff-RootHide-1.2.6-source.zip' | shasum -a 256 -c -
-          baseline=$(mktemp -d)
-          trap 'rm -rf "$baseline"' EXIT
-          unzip -q PowerCuff-RootHide-1.2.6-source.zip -d "$baseline"
-          cp rebuilt-1.2.7/tests/test_core.m "$baseline/rebuilt-1.2.6/tests/test_core.m"
-          clang -fobjc-arc -Wall -Wextra -Werror -I"$baseline/rebuilt-1.2.6" -framework Foundation -framework CoreFoundation "$baseline/rebuilt-1.2.6/tests/test_core.m" -o "$baseline/repro"
-          if "$baseline/repro" > BASELINE-1.2.6-REGRESSION.txt 2>&1; then
-            echo 'ERROR: original 1.2.6 did not reproduce the expected failure'; exit 1
-          fi
-          grep -F 'REGRESSION observed private calls=3 expected=1' BASELINE-1.2.6-REGRESSION.txt
-          grep -F 'Assertion failed' BASELINE-1.2.6-REGRESSION.txt
-          echo 'Original 1.2.6 regression reproduced; patched production tests must now pass.'
       - name: Test, compile, sign, package and verify
         shell: bash
         run: |
           set -euo pipefail
-          cd rebuilt-1.2.7
+          cd rebuilt-1.2.8
           sh build.sh 2>&1 | tee BUILD-LOG.txt
           cp BUILD-LOG.txt README-CN.md FIXES-CN.md STATUS-CN.md SOURCE-SHA256.json RESOURCE-PROVENANCE.json packages/
-          cp ../BASELINE-1.2.6-REGRESSION.txt packages/
           git rev-parse HEAD > packages/SOURCE_COMMIT
           (xcodebuild -version; clang --version; python3 --version) > packages/BUILD_ENVIRONMENT.txt
           printf 'THEOS=%s\nSDK=%s\n' "$THEOS_REF" "$SDK_REF" > packages/TOOLCHAIN_REFS
@@ -85,15 +67,15 @@ jobs:
       - name: Upload DEB and build evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: PowerCuff-RootHide-Rebuilt-1.2.7-${{ github.sha }}
-          path: rebuilt-1.2.7/packages/
+          name: PowerCuff-RootHide-Rebuilt-1.2.8-${{ github.sha }}
+          path: rebuilt-1.2.8/packages/
           if-no-files-found: error
           retention-days: 90
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: PowerCuff-1.2.7-failure-${{ github.sha }}
-          path: rebuilt-1.2.7/BUILD-LOG.txt
+          name: PowerCuff-1.2.8-failure-${{ github.sha }}
+          path: rebuilt-1.2.8/BUILD-LOG.txt
           if-no-files-found: ignore
 

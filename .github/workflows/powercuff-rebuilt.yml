@@ -1,8 +1,8 @@
-name: Build audited PowerCuff RootHide 1.2.8
+name: Build audited PowerCuff RootHide 1.2.9
 on:
   push:
     branches: ['rebuild/powercuff-1.2.6']
-    paths: ['PowerCuff-RootHide-1.2.8-source.zip', '.github/workflows/powercuff-rebuilt.yml']
+    paths: ['PowerCuff-RootHide-1.2.9-source.zip', '.github/workflows/powercuff-rebuilt.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -27,8 +27,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo '1abe3f084a8d0f2da3a748c56a1fc5e4d6860eaca99e2864fb60dc086bee6550  PowerCuff-RootHide-1.2.8-source.zip' | shasum -a 256 -c -
-          unzip -q PowerCuff-RootHide-1.2.8-source.zip 'rebuilt-1.2.8/*'
+          echo 'a84bed13d77f6c77b2ea3848cf7056eb23854fb24d432f403fdd8f69609a3754  PowerCuff-RootHide-1.2.9-source.zip' | shasum -a 256 -c -
+          unzip -q PowerCuff-RootHide-1.2.9-source.zip 'rebuilt-1.2.9/*'
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
         with:
           xcode-version: '16.4'
@@ -57,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd rebuilt-1.2.8
+          cd rebuilt-1.2.9
           sh build.sh 2>&1 | tee BUILD-LOG.txt
           cp BUILD-LOG.txt README-CN.md FIXES-CN.md STATUS-CN.md SOURCE-SHA256.json RESOURCE-PROVENANCE.json packages/
           git rev-parse HEAD > packages/SOURCE_COMMIT
@@ -67,15 +67,16 @@ jobs:
       - name: Upload DEB and build evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: PowerCuff-RootHide-Rebuilt-1.2.8-${{ github.sha }}
-          path: rebuilt-1.2.8/packages/
+          name: PowerCuff-RootHide-Rebuilt-1.2.9-${{ github.sha }}
+          path: rebuilt-1.2.9/packages/
           if-no-files-found: error
           retention-days: 90
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: PowerCuff-1.2.8-failure-${{ github.sha }}
-          path: rebuilt-1.2.8/BUILD-LOG.txt
+          name: PowerCuff-1.2.9-failure-${{ github.sha }}
+          path: rebuilt-1.2.9/BUILD-LOG.txt
           if-no-files-found: ignore
+
 

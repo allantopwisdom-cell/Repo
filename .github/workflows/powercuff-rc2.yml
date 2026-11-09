@@ -10,7 +10,7 @@ jobs:
     defaults:
       run:
         working-directory: candidate-rc2
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 25
     env:
       THEOS: ${{ github.workspace }}/theos-roothide

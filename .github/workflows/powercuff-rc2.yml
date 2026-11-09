@@ -1,0 +1,82 @@
+name: Build Powercuff 1.0.0-8 rc2 acceptance candidate
+on:
+  push:
+    branches: ['audit/powercuff-1.0.0-8-rc2-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    defaults:
+      run:
+        working-directory: candidate-rc2
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      THEOS: ${{ github.workspace }}/theos-roothide
+      THEOS_REF: cfba89a53a05b4a1b822121158acc3669c20602f
+      SDK_REF: 0222fd5413cf4b9af096f37b4621afa2688572f7
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Extract rc2 source
+        working-directory: ${{ github.workspace }}
+        run: unzip Powercuff-1.0.0-8-rc2-source.zip -d candidate-rc2
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: '16.4'
+      - name: Policy and configuration regression
+        run: |
+          set -euo pipefail
+          sh tests/check.sh | tee SOURCE_TESTS.txt
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: roothide/theos
+          ref: ${{ env.THEOS_REF }}
+          path: theos-roothide
+          submodules: recursive
+          persist-credentials: false
+      - name: Install pinned SDK and packaging tools
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/theos/sdks.git sdk-stage
+          git -C sdk-stage sparse-checkout set iPhoneOS16.5.sdk
+          git -C sdk-stage checkout "$SDK_REF"
+          mkdir -p "$THEOS/sdks"
+          cp -R sdk-stage/iPhoneOS16.5.sdk "$THEOS/sdks/"
+          brew install ldid dpkg xz
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+      - name: Compile, link, sign and package all source
+        run: |
+          set -euo pipefail
+          make clean package FINALPACKAGE=1 2>&1 | tee BUILD_LOG.txt
+          test "$(find packages -name '*.deb' -type f | wc -l | tr -d ' ')" = 1
+          PACKAGE=$(find packages -name '*.deb' -type f)
+          dpkg-deb -I "$PACKAGE" > packages/PACKAGE_INFO.txt
+          dpkg-deb -c "$PACKAGE" > packages/PACKAGE_CONTENTS.txt
+          dpkg-deb -x "$PACKAGE" extracted
+          DYLIB=$(find extracted -name Powercuff.dylib -type f)
+          test -n "$DYLIB"
+          lipo -info "$DYLIB" > packages/ARCHITECTURE.txt
+          otool -L "$DYLIB" > packages/DEPENDENCIES.txt
+          python3 tests/verify_macho.py "$DYLIB" > packages/SIGNATURE_CHECK.txt
+          python3 tests/verify_package.py "$PACKAGE" > packages/PACKAGE_VERIFICATION.txt
+          test "$(dpkg-deb -f "$PACKAGE" Architecture)" = iphoneos-arm64e
+          test "$(dpkg-deb -f "$PACKAGE" Version)" = '1.0.0-8~rc2+roothide16.5'
+          cp SOURCE_TESTS.txt BUILD_LOG.txt README.md packages/
+          git rev-parse HEAD > packages/SOURCE_COMMIT
+          cp SOURCE_FILES.sha256 packages/
+          cp ../Powercuff-1.0.0-8-rc2-source.zip packages/
+          shasum -a 256 ../Powercuff-1.0.0-8-rc2-source.zip > packages/SOURCE_ARCHIVE.sha256
+          printf 'THEOS=%s\nSDK=%s\n' "$THEOS_REF" "$SDK_REF" > packages/TOOLCHAIN_REFS
+          { xcodebuild -version; clang --version; brew list --versions ldid dpkg xz; } > packages/BUILD_ENVIRONMENT.txt
+          (cd packages && shasum -a 256 ./* > SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: Powercuff-1.0.0-8-rc2-${{ github.sha }}
+          path: candidate-rc2/packages/
+          if-no-files-found: error
+          retention-days: 90
